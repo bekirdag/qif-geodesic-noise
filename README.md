@@ -152,6 +152,7 @@ These are user-reported validation runs recorded under `test-runs/`:
 - **Stress tests**: rank-2 and phi-fixed variants match the baseline LR.
 - **Line mask + transfer (template)**: LR remains negative and close to baseline.
 - **Synthetic injection recovery**: positive LR (2.074083e+02) for injected alpha=1.0.
+- **Synthetic injection sweep**: alpha=0.1/0.3/1.0 all yield positive LR (~2.07e+02), confirming recoverability (not a threshold).
 
 ## Manuscript and method
 

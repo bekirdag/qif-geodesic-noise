@@ -260,6 +260,7 @@ A line‑mask + transfer‑function run (template placeholders) produced **LR \(
 Resolution sweep at 2048 s returned **LR \(\approx -7.529139\times10^4\)** (128 bins), **\(-1.893584\times10^5\)** (256 bins), and **\(-3.568421\times10^5\)** (512 bins) for all groups. [26]  
 A full‑data bootstrap at 128 s / 128 bins with \(n=20\) produced **p = 1.0000** for all groups, consistent with the null. [26]  
 A synthetic injection recovery test with \(\alpha=1.0\) produced **LR \(\approx 2.074083\times10^2\)**, confirming positive recovery when the signal is injected. [26]
+An injection sweep with \(\alpha=0.1,0.3,1.0\) yielded **LR \(\approx 2.07\times10^2\)** across all three amplitudes, confirming recoverability but not a detection threshold. [26]
 
 ## References
 

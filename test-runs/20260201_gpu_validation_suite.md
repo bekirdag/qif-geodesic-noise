@@ -51,3 +51,11 @@ Result:
 - LR = 2.074083e+02 (positive)
 
 Interpretation: the pipeline can recover an injected QIF signal under controlled synthetic conditions.
+
+## Synthetic injection sweep (alpha = 0.1, 0.3, 1.0)
+
+- alpha=0.1: LR = 2.072729e+02
+- alpha=0.3: LR = 2.073435e+02
+- alpha=1.0: LR = 2.074083e+02
+
+Log: `test-runs/20260201_injection_sweep.md`
