@@ -141,6 +141,39 @@ The `scripts/` directory includes helper scripts that implement the recommended 
 
 All scripts write logs to `test-runs/` in timestamped folders.
 
+## Visualization / figures
+
+Plotting utilities live in `scripts/plot_paper_figures.py`. Install plotting deps once:
+
+```
+pip install -r requirements-plot.txt
+```
+
+Generate validation plots from existing logs:
+
+```
+python scripts/plot_paper_figures.py validation --runs-dir test-runs --out-dir figures
+```
+
+This will attempt to write:
+- `figures/lr_vs_bins.png`
+- `figures/lr_by_dataset.png`
+- `figures/bootstrap_p_values.png`
+- `figures/stress_variants.png`
+
+Generate a model PSD plot:
+
+```
+python scripts/plot_paper_figures.py psd --out figures/model_psd.png
+```
+
+Generate an injection sweep CSV and plot it:
+
+```
+python scripts/run_injection_test.py --alpha-grid 0,0.1,0.3,1,3 --out-csv test-runs/injection_sweep.csv
+python scripts/plot_paper_figures.py injection --csv test-runs/injection_sweep.csv --out figures/injection_curve.png --logx
+```
+
 ## Findings so far (summary)
 
 All runs were performed on **ET-MDC1 loudest sample sets**:
