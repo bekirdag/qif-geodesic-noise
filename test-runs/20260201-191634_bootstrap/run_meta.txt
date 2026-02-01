@@ -1,0 +1,6 @@
+# Bootstrap run (full data, n=20)
+data_root=/home/wodo/apps/qif-geodesic-noise/data
+max_seconds=128
+max_bins=128
+bootstrap_n=20
+fit_phi=1

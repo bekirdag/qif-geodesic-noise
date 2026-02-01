@@ -148,6 +148,7 @@ These are user-reported validation runs recorded under `test-runs/`:
 
 - **Resolution sweep (2048 s, r=1)**: LR remains negative and grows in magnitude as bins increase (128/256/512).
 - **Bootstrap (n=50)**: p=1.0000 at 128 s / 128 bins (consistent with null under current settings).
+- **Bootstrap (n=20, all groups)**: p=1.0000 across all groups at 128 s / 128 bins.
 - **Stress tests**: rank-2 and phi-fixed variants match the baseline LR.
 - **Line mask + transfer (template)**: LR remains negative and close to baseline.
 - **Synthetic injection recovery**: positive LR (2.074083e+02) for injected alpha=1.0.

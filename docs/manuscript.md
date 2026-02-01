@@ -258,6 +258,7 @@ Bootstrap calibration with \(n=50\) yielded **p = 1.0000** at 128 s / 128 bins, 
 Stress tests with rank‑2 environmental model and fixed calibration phase matched the baseline LR. [26]  
 A line‑mask + transfer‑function run (template placeholders) produced **LR \(\approx -4.599273\times10^3\)**, close to baseline. [26]  
 Resolution sweep at 2048 s returned **LR \(\approx -7.529139\times10^4\)** (128 bins), **\(-1.893584\times10^5\)** (256 bins), and **\(-3.568421\times10^5\)** (512 bins) for all groups. [26]  
+A full‑data bootstrap at 128 s / 128 bins with \(n=20\) produced **p = 1.0000** for all groups, consistent with the null. [26]  
 A synthetic injection recovery test with \(\alpha=1.0\) produced **LR \(\approx 2.074083\times10^2\)**, confirming positive recovery when the signal is injected. [26]
 
 ## References
