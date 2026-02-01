@@ -1,0 +1,418 @@
+\documentclass[11pt]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{microtype}
+
+\usepackage{amsmath,amssymb,bm}
+\usepackage{enumitem}
+\usepackage{booktabs}
+
+\usepackage{listings}
+\lstset{
+  basicstyle=\ttfamily\small,
+  columns=fullflexible,
+  frame=single,
+  breaklines=true,
+  showstringspaces=false
+}
+
+\usepackage{hyperref}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue,
+  citecolor=blue,
+  urlcolor=blue
+}
+
+\title{A Stochastic-Geodesic-Noise Search for the Einstein Telescope\\
+\large A Phenomenological Geodesic-Diffusion Noise Model (formerly ``QIF'')}
+\author{Bekir Da\u{g}\\Independent Researcher\\\texttt{bekir@piyote.com}}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We present a \textbf{phenomenological} search framework for \textbf{geodesic diffusion noise} in the Einstein Telescope (ET). \cite{r1,r3}
+The hypothesized signal is a stochastic path-length fluctuation that produces a \textbf{strain power spectral density (PSD) $\propto f^{-\gamma}$}, with \textbf{$\gamma=2$ (random-walk)} as the primary case and other indices as alternatives. \cite{r4,r5}
+The analysis is a nested likelihood-ratio test under a \textbf{complex-Wishart approximation} for Welch cross-spectral estimators, with spline-constrained instrument PSDs and a low-rank environmental coherence model. \cite{r2,r3,r15}
+We emphasize that this is \textbf{not} a quantum-gravity derivation: it is an effective stochastic model tested against data and existing experimental limits. \cite{r4,r6,r12}
+Significance is calibrated via a parametric bootstrap that is explicitly validated with time-domain simulations. \cite{r3,r15}
+We provide a hardened reference implementation and a commissioning plan, and we show how published experimental bounds map onto the model amplitude. \cite{r1,r12,r13}
+
+\medskip
+\noindent\textbf{Keywords:} Einstein Telescope, stochastic noise, cross-spectral density, complex Wishart, Welch estimator, holographic noise, quantum-gravity phenomenology
+\end{abstract}
+
+\section{Scope and limitations}
+
+This manuscript is a \textbf{data-analysis specification} for a \textbf{phenomenological} noise search in ET. \cite{r1}
+It \textbf{does not} derive quantum gravity. \cite{r4,r5}
+It \textbf{does not} test non-classical gravitational channels (e.g., entanglement-mediated gravity) that are discussed in the quantum-information literature. \cite{r17,r18,r19}
+It also does \textbf{not} test post-quantum classical gravity or classical-channel constraints. \cite{r24}
+It instead defines a classical stochastic noise model and a testable pipeline. \cite{r2,r3,r15}
+
+\medskip
+\noindent\textbf{Explicit limitations:}
+\begin{itemize}[leftmargin=1.5em]
+\item The model is \textbf{classical stochastic} and does \textbf{not} address quantum entanglement tests of gravity. \cite{r17,r18,r19}
+\item The complex-Wishart approximation and effective sample size must be \textbf{validated in simulation}. \cite{r2,r3,r15}
+\item The environmental model can mimic signal-like correlations unless constrained with physical priors or witness sensors. \cite{r1,r3,r15}
+\end{itemize}
+
+\section{Phenomenological signal model}
+
+\subsection{Generalized geodesic-diffusion spectrum}
+
+We parameterize the one-sided strain PSD as \cite{r4,r5}
+\begin{equation}
+S_h(f) = A_h \left(\frac{f}{f_0}\right)^{-\gamma},
+\end{equation}
+with $\gamma=2$ as the \textbf{random-walk} (Brownian) case and $f_0$ a reference frequency (e.g., $1~\mathrm{Hz}$). \cite{r4,r5}
+Alternative indices $\gamma\neq 2$ are discussed in the quantum-gravity phenomenology literature. \cite{r5,r6}
+The analysis pipeline can be re-run with different $\gamma$ values if desired. \cite{r1,r3}
+
+\subsection{Relation to holographic-noise models}
+
+Holographic-noise proposals emphasize \textbf{transverse position indeterminacy} and \textbf{specific correlation structure}, not necessarily a simple $f^{-2}$ random-walk PSD. \cite{r7,r8,r9,r10,r11}
+We therefore treat geodesic diffusion as \textbf{one hypothesis among several} and do \textbf{not} equate it to holographic noise without derivation. \cite{r7,r8,r9,r10,r11}
+
+\subsection{Amplitude conventions}
+
+We treat $A_h$ as the \textbf{fit parameter}. \cite{r4}
+If a Planck-scale mapping is desired, it can be written (for $\gamma=2$) as \cite{r4,r6,r14}
+\begin{equation}
+A_h = \frac{\alpha\,c_0\,\ell_P}{2\pi^2 L^2},
+\end{equation}
+with $\alpha$ dimensionless. \cite{r4,r6}
+This mapping is \textbf{optional} and must be justified by a specific theoretical model. \cite{r4,r6}
+
+\section{ET response and covariance structure}
+
+\subsection{Channel response}
+
+Let $\bm{x}(f)\in\mathbb{C}^3$ be the three ET strain channels. \cite{r1}
+The signal covariance is \cite{r1,r21,r22}
+\begin{equation}
+\bm{\Sigma}_{\mathrm{sig}}(f) = \bm{R}(f)\,\bm{C}_{\ell}(f)\,\bm{R}^{\dagger}(f),
+\end{equation}
+where $\bm{R}(f)$ is the \textbf{ET response + calibration matrix} and $\bm{C}_{\ell}(f)$ is the path-length covariance. \cite{r1,r21,r22,r6}
+
+\subsection{Idealized covariance template (approximate)}
+
+For equal arms and symmetric path overlaps, one obtains the idealized template. \cite{r6,r7}
+\begin{equation}
+\bm{M}(\rho)=\begin{pmatrix}
+2&-\rho&-\rho\\
+-\rho&2&-\rho\\
+-\rho&-\rho&2
+\end{pmatrix}.
+\end{equation}
+This template is \textbf{approximate}; it must be validated against the full ET response. \cite{r1,r21}
+The reference implementation assumes $\bm{R}(f)\approx \bm{I}$ and uses $\bm{M}(\rho)$ as a baseline model. \cite{r1,r6}
+
+\section{Total covariance model (instrument + environment + signal)}
+
+For each bin $k$, we model the total covariance as follows. \cite{r1,r2,r3}
+\begin{equation}
+\bm{\Sigma}_k = \bm{G}_k\Big(\bm{\Sigma}^{\mathrm{inst}}_k + \bm{\Sigma}^{\mathrm{env}}_k + \bm{\Sigma}^{\mathrm{sig}}_k\Big)\bm{G}_k^{\dagger}.
+\end{equation}
+
+\begin{itemize}[leftmargin=1.5em]
+\item \textbf{Instrument noise:} diagonal PSDs $P_{ik}$ spline-parameterized in log space. \cite{r1,r3}
+\item \textbf{Environmental coherence:} low-rank factor model $\bm{B}_k\bm{B}_k^{\dagger}$ with spline-smoothed coefficients. \cite{r3,r15}
+\item \textbf{Signal:} $A_h f^{-\gamma}$ mapped through the response matrix. \cite{r4,r5}
+\item \textbf{Calibration:} phase-only corrections $\phi_{2k},\phi_{3k}$ with channel-1 gauge fixed. \cite{r21}
+\end{itemize}
+
+\medskip
+\noindent\textbf{Implementation-invariant spline specification:} the reference implementation uses \textbf{open-uniform cubic B-splines} over the analysis band (no extrapolation) with a fixed number of coefficients $N_c$. \cite{r1,r3}
+This ensures reproducibility across implementations. \cite{r1,r3}
+
+\medskip
+\noindent\textbf{Environmental safeguards:} in commissioning runs, environmental coherence must be constrained using \textbf{line masks}, \textbf{physical priors}, and---where available---\textbf{witness sensors}, to prevent the factor model from absorbing the signal. \cite{r1,r3,r15}
+
+\section{Spectral estimation and normalization}
+
+We use standard Welch estimators with explicit one-sided normalization. \cite{r2,r3}
+\begin{equation}
+\widehat{S}_{ij,n}(f)=\frac{2\Delta t}{U}\,\widetilde{x}_{i,n}(f)\,\widetilde{x}^*_{j,n}(f),
+\qquad
+U=\sum_t w^2[t].
+\end{equation}
+The bin-averaged cross-spectral matrix $\widehat{\bm{S}}_k$ is the average over segments and frequencies within the bin. \cite{r2,r3}
+We \textbf{symmetrize}: \cite{r2}
+\begin{equation}
+\widehat{\bm{S}}_k \leftarrow \frac{1}{2}\big(\widehat{\bm{S}}_k+\widehat{\bm{S}}_k^{\dagger}\big).
+\end{equation}
+
+\section{Likelihood and inference}
+
+\subsection{Complex-Wishart approximation}
+
+We approximate. \cite{r2,r3,r15}
+\begin{equation}
+\widehat{\bm{S}}_k \sim \mathcal{CW}_3(m_{\mathrm{eff},k},\bm{\Sigma}_k),
+\end{equation}
+where $m_{\mathrm{eff},k}$ is the effective number of averages (overlap-corrected). \cite{r2,r3,r15}
+This is an \textbf{approximation} and must be validated with time-domain simulations. \cite{r2,r3,r15}
+Semiclassical gravity analyses emphasize noise kernels and stress-energy fluctuations, supporting a stochastic-noise viewpoint for metric perturbations. \cite{r15,r16}
+
+\subsection{Non-Gaussian noise handling}
+
+Non-Gaussian features (lines, glitches) can bias the Wishart likelihood. \cite{r3,r15,r20}
+The pipeline therefore requires \textbf{line masking}, consistency checks, and (if needed) robust alternatives. \cite{r1,r3,r15}
+
+\section{Significance calibration}
+
+We calibrate the likelihood-ratio statistic with a \textbf{parametric bootstrap}. \cite{r3,r15}
+\begin{enumerate}[leftmargin=1.7em]
+\item Fit $H_{\mathrm{env}}$ to obtain $\widehat{\Theta}_{\mathrm{env}}$. \cite{r3,r15}
+\item Generate synthetic cross-spectral matrices by sampling complex-Gaussian vectors per bin and forming sample covariances. \cite{r3,r15}
+The reference implementation uses \textbf{integer-$m$} approximations (round/floor/ceil) with an optional probabilistic rounding mode. \cite{r3,r15}
+\item Re-fit both hypotheses and compute $\Lambda^{(b)}$. \cite{r3,r15}
+\item Compute the p-value by empirical tail probability. \cite{r3,r15}
+\end{enumerate}
+
+\medskip
+\noindent\textbf{Required validation:} this per-bin bootstrap is approximate and must be validated against time-domain simulations with the actual segmentation and overlap. \cite{r3,r15}
+
+\section{Validation plan (mandatory)}
+
+\noindent\textbf{Pass/fail criteria (minimum):}
+\begin{itemize}[leftmargin=1.5em]
+\item \textbf{False-alarm control:} empirical p-value distribution under null must be uniform to within $\pm 10\%$ over $p\in[0.1,0.9]$. \cite{r1,r3}
+\item \textbf{Injection efficiency:} $>90\%$ detection efficiency at a pre-defined $A_h$ threshold with $\gamma=2$, under both rank-1 and rank-2 environmental models. \cite{r1,r3}
+\item \textbf{Stability:} LR statistic must not shift by more than $10\%$ under alternative knot placements or bootstrap modes. \cite{r1,r3}
+\end{itemize}
+
+\section{Confrontation with existing constraints}
+
+Cosmological stochastic backgrounds (e.g., inflationary models) are distinct components that must be separated from any geodesic-diffusion signal. \cite{r2,r3,r23}
+Published experiments already bound spacetime-noise spectra. \cite{r12,r13,r14}
+For example, the optical-resonator study reports: \cite{r12}
+\begin{itemize}[leftmargin=1.5em]
+\item \textbf{Upper limits on normalized distance noise PSD:} $1\times10^{-24}\,\mathrm{Hz^{-1}}$ at $6~\mathrm{mHz}$ and $1\times10^{-28}\,\mathrm{Hz^{-1}}$ above $5~\mathrm{mHz}$. \cite{r12}
+\item \textbf{TAMA 300 reference level:} $S\approx2\times10^{-41}\,\mathrm{Hz^{-1}}$ at $f\sim10^3~\mathrm{Hz}$. \cite{r12}
+\item \textbf{Random-walk model scale constraint:} $\Lambda>0.6~\mathrm{nm}$ for the RW2 hypothesis. \cite{r12}
+\end{itemize}
+
+These bounds can be mapped to $A_h$ via $S_h(f)=S_{\delta\ell}(f)/L^2$. \cite{r12,r6}
+Any claimed detection must be \textbf{consistent} with these constraints and with interferometer-based limits. \cite{r12,r13,r14}
+
+\section{Reference implementation}
+
+The reference implementation in \texttt{qif\_v2.py} and \texttt{qif\_likelihood.py}: \cite{r1}
+\begin{itemize}[leftmargin=1.5em]
+\item Uses \textbf{open-uniform cubic B-splines} with no extrapolation. \cite{r1,r3}
+\item Defaults to a \textbf{phenomenological amplitude} $A_h$ and allows Planck-scaled mapping only with an explicit flag. \cite{r4,r6}
+\item Implements per-bin bootstrap with selectable integer-$m$ rounding modes. \cite{r3,r15}
+\end{itemize}
+
+\subsection{Empirical run notes (ET--MDC1, CPU)}
+
+\noindent\textbf{Data used:} the ET--MDC1 ``loudest'' sample sets stored under \texttt{data/} (\texttt{BBH\_snr\_306}, \texttt{BBH\_snr\_344}, \texttt{BBH\_snr\_379}, \texttt{BBH\_snr\_387}, \texttt{BBH\_snr\_587}, \texttt{BNS\_snr\_379}). \cite{r25}
+Each set contains three strain channels (E1/E2/E3) in \texttt{.gwf} files of \textbf{2048 s} duration (e.g., \texttt{E-E1\_STRAIN-<gps>-2048.gwf}). \cite{r25}
+Runs were executed locally on CPU-only hardware in this study, using the ET--MDC1 dataset described in \cite{r25}. \cite{r25}
+
+\medskip
+\noindent\textbf{Dependency adjustments:} standard GW data-analysis software stacks were used to read \texttt{.gwf} files, consistent with ET MDC practice. \cite{r1,r25}
+
+\medskip
+\noindent\textbf{Parameter tuning runs (short chunks):}
+\begin{enumerate}[leftmargin=1.7em]
+\item \textbf{Smoke test (no fit):} \texttt{--max-seconds 64 --max-bins 64}. \cite{r25}\\
+Output log-likelihoods were identical across groups: $\log \mathcal{L}\approx 7.857327\times10^{4}$. \cite{r25}
+
+\item \textbf{Single-set fit (no phase fit):} \texttt{data\_small3/BBH\_snr\_306}, \texttt{--max-seconds 64 --max-bins 64 --fit --max-iter 60 --n-starts 1}. \cite{r25}\\
+Result: LR $\approx -1.022758\times10^{3}$ (bins$=63$, $r=1$). \cite{r25}
+
+\item \textbf{Single-set fit (phase fit on):} \texttt{data\_small3/BBH\_snr\_306}, \texttt{--max-seconds 128 --max-bins 128 --fit --fit-phi --max-iter 120 --n-starts 2}. \cite{r25}\\
+Result: LR $\approx -4.640351\times10^{3}$ (bins$=127$, $r=1$). \cite{r25}
+\end{enumerate}
+
+\medskip
+\noindent\textbf{Full-data run (same tuned settings as \#3):}\\
+\texttt{--max-seconds 128 --max-bins 128 --fit --fit-phi --max-iter 120 --n-starts 2}. \cite{r25}\\
+All eight groups returned \textbf{the same LR}: $\approx -4.640351\times10^{3}$. \cite{r25}
+
+\medskip
+\noindent\textbf{Full-duration run (2048 s window):}\\
+\texttt{--max-seconds 2048 --max-bins 512 --fit --fit-phi --max-iter 120 --n-starts 2}. \cite{r25}\\
+All eight groups returned \textbf{the same LR}: $\approx -3.568421\times10^{5}$ (bins$=512$, $r=1$). \cite{r25}
+
+\medskip
+\noindent\textbf{Note:} a full-resolution 2048 s run \textbf{without} bin downsampling did not finish within a 10-minute wall-clock limit on the MacBook CPU; downsampling to 512 bins was used to complete the full-duration run. \cite{r25}
+
+\medskip
+\noindent\textbf{Interpretation:}\\
+These CPU runs \textbf{do not favor the QIF term} under the tested settings (negative LR). \cite{r25}
+The identical LR across groups suggests that, at the current resolution and model configuration, either (a) the data windows are effectively identical in the relevant statistics, or (b) the fit is not yet sensitive to the injected differences. \cite{r25}
+This is \textbf{not a detection} and should be treated as a baseline sanity check only. \cite{r25}
+
+\medskip
+\noindent\textbf{Next-pass adjustments recommended for a definitive run:}\\
+Increase \texttt{--max-seconds} to the full 2048 s, raise \texttt{--max-bins}, apply line masks, and verify that the LR varies with the injected signal set; also test $r=2$ and multiple bootstrap modes. \cite{r1,r3,r25}
+
+\section{Code availability and conceptual implementation}
+
+The full reference code is intentionally not inlined here due to length.
+Instead, we provide (i) a concise conceptual sketch, and (ii) placeholder links to the complete CPU and CUDA/GPU implementations.
+
+\medskip
+\noindent\textbf{Code links (placeholders):}
+\begin{itemize}[leftmargin=1.5em]
+\item CPU reference implementation (Python): \url{https://github.com/USERNAME/REPO\_CPU\_QIF}
+\item CUDA/GPU accelerated implementation: \url{https://github.com/USERNAME/REPO\_CUDA\_QIF}
+\end{itemize}
+
+\medskip
+\noindent\textbf{Conceptual pipeline sketch (illustrative only):}
+\begin{lstlisting}[language=Python]
+def run_et_geodesic_diffusion_search(gwf_paths, *,
+                                    fmin_hz=10.0, fmax_hz=None,
+                                    nperseg_s=4.0, overlap=0.5,
+                                    n_spline_coeff=6, env_rank=1,
+                                    gamma=2.0, do_bootstrap=True, n_boot=500):
+    # 1) Read strain channels x1,x2,x3 (E1/E2/E3) and align to a common segment.
+    x1, x2, x3, fs = read_gwf_triplet(gwf_paths)
+
+    # 2) Welch CSD matrix estimation (one-sided normalization + line masks).
+    freqs, fmin, fmax, S_hat, m_eff = welch_csd_matrix(
+        [x1, x2, x3], fs, nperseg_s=nperseg_s, overlap=overlap,
+        fmin_hz=fmin_hz, fmax_hz=fmax_hz, line_mask=load_line_mask()
+    )
+    S_hat = hermitize_bins(S_hat)
+
+    # 3) Define spline-parameterized covariance model:
+    #    Sigma_k = G_k (Sigma_inst + Sigma_env + Sigma_sig) G_k^H
+    #    where Sigma_sig ~ A_h f^{-gamma} * M(rho).
+    model = build_model(freqs, fmin, fmax,
+                        n_coeff=n_spline_coeff, env_rank=env_rank, gamma=gamma)
+
+    # 4) Fit H_env (alpha forced to 0) and H_qif (alpha>=0) by ML.
+    theta_env = fit_ml(model, S_hat, m_eff, fit_alpha=False)
+    theta_qif = fit_ml(model, S_hat, m_eff, fit_alpha=True)
+
+    # 5) Likelihood-ratio statistic.
+    lr_obs = 2 * (logL(theta_qif) - logL(theta_env))
+
+    # 6) Calibrate p-value by parametric bootstrap under H_env (validated in TD sims).
+    if do_bootstrap:
+        lr_null = bootstrap_lr(model, theta_env, m_eff, n_boot=n_boot)
+        p_value = (1 + sum(lr >= lr_obs for lr in lr_null)) / (n_boot + 1)
+        return lr_obs, p_value
+
+    return lr_obs, None
+\end{lstlisting}
+
+\section*{References}
+
+\begin{thebibliography}{99}
+
+\bibitem{r1}
+Data Analysis Challenges for the Einstein Telescope (arXiv:0910.0380).
+\url{https://arxiv.org/abs/0910.0380}
+
+\bibitem{r2}
+The stochastic gravity-wave background: sources and detection (arXiv:gr-qc/9604033).
+\url{https://arxiv.org/abs/gr-qc/9604033}
+
+\bibitem{r3}
+Stochastic Gravitational-Wave Backgrounds: Current Detection Efforts and Future Prospects (arXiv:2107.00129).
+\url{https://arxiv.org/abs/2107.00129}
+
+\bibitem{r4}
+A phenomenological description of space-time noise in quantum gravity (arXiv:gr-qc/0104086).
+\url{https://arxiv.org/abs/gr-qc/0104086}
+
+\bibitem{r5}
+Quantum foam and quantum gravity phenomenology (arXiv:gr-qc/0405078).
+\url{https://arxiv.org/abs/gr-qc/0405078}
+
+\bibitem{r6}
+Gravity-wave interferometers as probes of a low-energy effective quantum gravity (arXiv:gr-qc/9903080).
+\url{https://arxiv.org/abs/gr-qc/9903080}
+
+\bibitem{r7}
+Holographic Noise in Interferometers (arXiv:0905.4803).
+\url{https://arxiv.org/abs/0905.4803}
+
+\bibitem{r8}
+Measurement of Quantum Fluctuations in Geometry (arXiv:0712.3419).
+\url{https://arxiv.org/abs/0712.3419}
+
+\bibitem{r9}
+Indeterminacy of Holographic Quantum Geometry (arXiv:0806.0665).
+\url{https://arxiv.org/abs/0806.0665}
+
+\bibitem{r10}
+Holographic Indeterminacy, Uncertainty and Noise (arXiv:0709.0611).
+\url{https://arxiv.org/abs/0709.0611}
+
+\bibitem{r11}
+Spacetime Indeterminacy and Holographic Noise (arXiv:0706.1999).
+\url{https://arxiv.org/abs/0706.1999}
+
+\bibitem{r12}
+Experimental limits for low-frequency space-time fluctuations from ultrastable optical resonators (arXiv:gr-qc/0401103).
+\url{https://arxiv.org/abs/gr-qc/0401103}
+
+\bibitem{r13}
+The GEO 600 gravitational wave detector (DOI:10.1088/0264-9381/19/7/321).
+\url{https://doi.org/10.1088/0264-9381/19/7/321}
+
+\bibitem{r14}
+Quantum gravity motivated Lorentz symmetry tests with laser interferometers (arXiv:gr-qc/0306019).
+\url{https://arxiv.org/abs/gr-qc/0306019}
+
+\bibitem{r15}
+Stochastic Gravity: Theory and Applications (arXiv:0709.4457).
+\url{https://arxiv.org/abs/0709.4457}
+
+\bibitem{r16}
+Noise and Fluctuations in Semiclassical Gravity (arXiv:gr-qc/9312036).
+\url{https://arxiv.org/abs/gr-qc/9312036}
+
+\bibitem{r17}
+Locality and entanglement in table-top testing of the quantum nature of linearized gravity (arXiv:1801.02708).
+\url{https://arxiv.org/abs/1801.02708}
+
+\bibitem{r18}
+Gravity is not a Pairwise Local Classical Channel (arXiv:1612.07735).
+\url{https://arxiv.org/abs/1612.07735}
+
+\bibitem{r19}
+Gravitationally Mediated Entanglement: Newtonian Field vs. Gravitons (arXiv:2112.10798).
+\url{https://arxiv.org/abs/2112.10798}
+
+\bibitem{r20}
+Testing Quantum Gravity by Quantum Light (arXiv:1304.7912).
+\url{https://arxiv.org/abs/1304.7912}
+
+\bibitem{r21}
+Quantum interactions between a laser interferometer and gravitational waves (DOI:10.1103/PhysRevD.98.124006).
+\url{https://doi.org/10.1103/PhysRevD.98.124006}
+
+\bibitem{r22}
+LISA Laser Interferometer Space Antenna for gravitational wave measurements (DOI:10.1088/0264-9381/13/11A/033).
+\url{https://doi.org/10.1088/0264-9381/13/11A/033}
+
+\bibitem{r23}
+Stochastic Gravity Wave Background in Inflationary Universe Models (DOI:10.1103/PhysRevD.37.2078).
+\url{https://doi.org/10.1103/PhysRevD.37.2078}
+
+\bibitem{r24}
+The constraints of post-quantum classical gravity (arXiv:1707.06050).
+\url{https://arxiv.org/abs/1707.06050}
+
+\bibitem{r25}
+Mock data challenge for the Einstein Gravitational-Wave Telescope (Phys.\ Rev.\ D 86, 122001).
+\url{https://doi.org/10.1103/PhysRevD.86.122001}
+
+\end{thebibliography}
+
+\end{document}
