@@ -1,0 +1,58 @@
+Ubuntu usage (CPU and GPU)
+==========================
+
+GPU (Ubuntu + NVIDIA CUDA)
+--------------------------
+From the repo root:
+
+1) Create a virtualenv and install deps
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -U pip
+   pip install -r requirements.txt
+
+2) Install CuPy (pick the build that matches your CUDA version)
+   pip install cupy-cuda11x
+   # or, for CUDA 12.x:
+   # pip install cupy-cuda12x
+
+3) (Optional) sanity check GPU visibility
+   python -c "import cupy as cp; print('GPU count:', cp.cuda.runtime.getDeviceCount()); print('GPU:', cp.cuda.runtime.getDeviceProperties(0)['name'].decode())"
+
+4) Download ET-MDC1 loudest sample data
+   ./scripts/download_data.sh
+
+5) Run the GPU pipeline
+   python qif_v2_cuda.py --data-root data --device auto --max-seconds 128 --max-bins 128 --fit --fit-phi --max-iter 120 --n-starts 2
+
+6) Full-duration run (downsampled)
+   python qif_v2_cuda.py --data-root data --device auto --max-seconds 2048 --max-bins 512 --fit --fit-phi --max-iter 120 --n-starts 2
+
+
+CPU (Ubuntu, no GPU)
+--------------------
+From the repo root:
+
+1) Create a virtualenv and install deps
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -U pip
+   pip install -r requirements.txt
+
+2) Download ET-MDC1 loudest sample data
+   ./scripts/download_data.sh
+
+3) Smoke test (fast)
+   python qif_v2.py --data-root data --max-seconds 64 --max-bins 64
+
+4) Tuned fit (short run)
+   python qif_v2.py --data-root data --max-seconds 128 --max-bins 128 --fit --fit-phi --max-iter 120 --n-starts 2
+
+5) Full-duration run (downsampled)
+   python qif_v2.py --data-root data --max-seconds 2048 --max-bins 512 --fit --fit-phi --max-iter 120 --n-starts 2
+
+
+Notes
+-----
+- The download script uses BASE_URL=http://et-origin.cism.ucl.ac.be/ by default.
+- If your system CUDA version is unknown, run `nvidia-smi` to check it.
