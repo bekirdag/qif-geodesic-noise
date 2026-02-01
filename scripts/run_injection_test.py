@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 import argparse
+import os
+import sys
+
 import numpy as np
+
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 
 from qif_v2 import (
     _make_synthetic_data,
