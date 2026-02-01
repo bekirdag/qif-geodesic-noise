@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+import time
 from dataclasses import dataclass, replace
 
 import numpy as np
@@ -73,6 +74,8 @@ def _format_cell(col: str, value) -> str:
     if isinstance(value, float):
         if col in {"P", "P_SE"}:
             return f"{value:.4f}"
+        if col in {"DUR_S"}:
+            return f"{value:.2f}"
         return f"{value:.6e}"
     if isinstance(value, bool):
         return "yes" if value else "no"
@@ -102,6 +105,8 @@ def _color_for_cell(col: str, value) -> str | None:
         return Ansi.FG_YELLOW
     if col == "VARIANT":
         return Ansi.FG_BLUE
+    if col == "DUR_S":
+        return Ansi.FG_GRAY
     return None
 
 
@@ -152,6 +157,7 @@ def _print_summary(
     r: int,
     bootstrap_n: int,
     use_color: bool,
+    total_seconds: float,
 ) -> None:
     icon_run = ""
     icon_gpu = ""
@@ -169,6 +175,10 @@ def _print_summary(
         + f" groups={len(rows)} max_seconds={max_seconds} nperseg={nperseg_seconds} overlap={overlap} "
         + f"fmin={fmin_hz} fmax={fmax_hz or 'nyquist'} n_coeff={n_coeff} r={r} fit={fit} fit_phi={fit_phi} "
         + f"bootstrap={bootstrap_n}"
+    )
+    print(
+        _colorize(f"{icon_note} Timing:", Ansi.FG_YELLOW, use_color)
+        + f" total_runtime={total_seconds:.2f}s"
     )
     if fit:
         lr_vals = [r["LR"] for r in rows if r.get("LR") is not None]
@@ -999,7 +1009,9 @@ def run_on_sample_data_cuda(
         return
     rows: list[dict] = []
     variants: list[dict] = []
+    total_start = time.perf_counter()
     for group in groups:
+        start = time.perf_counter()
         results = _run_loglike_on_group_cuda(
             group,
             max_seconds=max_seconds,
@@ -1029,15 +1041,20 @@ def run_on_sample_data_cuda(
             backend=backend,
         )
         label = group["set"] or "data"
+        elapsed = time.perf_counter() - start
         if "loglike" in results:
             if not pretty:
-                print(f"{label} gps={group['gps']} loglike_et_qif={results['loglike']:.6e}")
+                print(
+                    f"{label} gps={group['gps']} loglike_et_qif={results['loglike']:.6e} "
+                    f"dur={elapsed:.2f}s"
+                )
             rows.append(
                 {
                     "DATASET": label,
                     "GPS": group["gps"],
                     "BINS": results["freq_bins"],
                     "LOGL": float(results["loglike"]),
+                    "DUR_S": elapsed,
                 }
             )
             continue
@@ -1046,6 +1063,7 @@ def run_on_sample_data_cuda(
             line = f"{label} gps={group['gps']} bins={results['freq_bins']} r={base['r']} lr={base['lr']:.6e}"
             if "p_value" in base:
                 line += f" p={base['p_value']:.4f}±{base['p_se']:.4f}"
+            line += f" dur={elapsed:.2f}s"
             print(line)
         row = {
             "DATASET": label,
@@ -1056,6 +1074,7 @@ def run_on_sample_data_cuda(
             "LNL_ENV": base["lnL_env"],
             "LNL_QIF": base["lnL_qif"],
             "LR": base["lr"],
+            "DUR_S": elapsed,
         }
         if "p_value" in base:
             row["P"] = base["p_value"]
@@ -1091,9 +1110,9 @@ def run_on_sample_data_cuda(
 
     has_fit = any("LR" in r for r in rows)
     if has_fit:
-        headers = ["DATASET", "GPS", "BINS", "R", "FIT_PHI", "LNL_ENV", "LNL_QIF", "LR", "P", "P_SE"]
+        headers = ["DATASET", "GPS", "BINS", "R", "FIT_PHI", "LNL_ENV", "LNL_QIF", "LR", "P", "P_SE", "DUR_S"]
     else:
-        headers = ["DATASET", "GPS", "BINS", "LOGL"]
+        headers = ["DATASET", "GPS", "BINS", "LOGL", "DUR_S"]
     table = _render_table(headers, rows, use_color)
     if table:
         print(table)
@@ -1118,6 +1137,7 @@ def run_on_sample_data_cuda(
         r=r,
         bootstrap_n=bootstrap_n,
         use_color=use_color,
+        total_seconds=time.perf_counter() - total_start,
     )
 
 
