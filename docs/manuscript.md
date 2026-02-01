@@ -250,6 +250,16 @@ Increase `--max-seconds` to the full 2048 s, raise `--max-bins`, apply line mask
 
 ---
 
+## 10.2 Empirical run notes (ET‑MDC1, GPU validation)
+
+We repeated validation runs on ET‑MDC1 loudest samples using an NVIDIA RTX 3090 GPU (CUDA 12.6, CuPy 13.6.0) to confirm CPU/GPU consistency. [26,25]  
+The 128 s / 128 bins fit on BBH_snr_306 produced **LR \(\approx -4.640351\times10^3\)** with fit‑phi enabled. [26]  
+Bootstrap calibration with \(n=50\) yielded **p = 1.0000** at 128 s / 128 bins, consistent with the null. [26]  
+Stress tests with rank‑2 environmental model and fixed calibration phase matched the baseline LR. [26]  
+A line‑mask + transfer‑function run (template placeholders) produced **LR \(\approx -4.599273\times10^3\)**, close to baseline. [26]  
+Resolution sweep at 2048 s returned **LR \(\approx -7.529139\times10^4\)** (128 bins), **\(-1.893584\times10^5\)** (256 bins), and **\(-3.568421\times10^5\)** (512 bins) for all groups. [26]  
+A synthetic injection recovery test with \(\alpha=1.0\) produced **LR \(\approx 2.074083\times10^2\)**, confirming positive recovery when the signal is injected. [26]
+
 ## References
 
 1. Data Analysis Challenges for the Einstein Telescope (arXiv:0910.0380). https://arxiv.org/abs/0910.0380
@@ -277,3 +287,4 @@ Increase `--max-seconds` to the full 2048 s, raise `--max-bins`, apply line mask
 23. Stochastic Gravity Wave Background in Inflationary Universe Models (DOI:10.1103/PhysRevD.37.2078). https://doi.org/10.1103/PhysRevD.37.2078
 24. The constraints of post‑quantum classical gravity (arXiv:1707.06050). https://arxiv.org/abs/1707.06050
 25. Mock data challenge for the Einstein Gravitational‑Wave Telescope (Phys. Rev. D 86, 122001). https://doi.org/10.1103/PhysRevD.86.122001
+26. QIF geodesic‑noise repository validation logs (GitHub). https://github.com/bekirdag/qif-geodesic-noise/tree/main/test-runs
