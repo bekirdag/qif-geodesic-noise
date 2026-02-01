@@ -41,6 +41,13 @@ def main() -> None:
         default="",
         help="Comma-separated alpha values to sweep (overrides --alpha).",
     )
+    parser.add_argument(
+        "--alpha-logspace",
+        type=float,
+        nargs=3,
+        metavar=("LOG10_MIN", "LOG10_MAX", "N"),
+        help="Log10-spaced alpha sweep (overrides --alpha if --alpha-grid is not set).",
+    )
     parser.add_argument("--m-eff", type=int, default=20, help="Effective averages per bin (integer).")
     parser.add_argument("--seed", type=int, default=0, help="Random seed.")
     parser.add_argument("--fit-phi", action="store_true", help="Fit calibration phases.")
@@ -63,7 +70,21 @@ def main() -> None:
     alpha_grid = _parse_alpha_grid(args.alpha_grid)
     if alpha_grid and any(a < 0 for a in alpha_grid):
         raise SystemExit("--alpha-grid values must be >= 0")
-    alphas = alpha_grid if alpha_grid else [args.alpha]
+
+    alpha_logspace = None
+    if args.alpha_logspace is not None:
+        log10_min, log10_max, n_points = args.alpha_logspace
+        n_points_int = int(n_points)
+        if n_points_int <= 0:
+            raise SystemExit("--alpha-logspace N must be > 0")
+        alpha_logspace = np.logspace(float(log10_min), float(log10_max), n_points_int).tolist()
+
+    if alpha_grid:
+        alphas = alpha_grid
+    elif alpha_logspace is not None:
+        alphas = alpha_logspace
+    else:
+        alphas = [args.alpha]
 
     data = _make_synthetic_data(n_f=args.n_f, n_coeff=args.n_coeff, r=args.r, seed=args.seed)
 

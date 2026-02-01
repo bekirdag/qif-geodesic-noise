@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "fingerprint_sha256": "8ea76ee709e3e67d69651346e1333bcc2b8c356d4421aea74f66550e26e5b9b8",
-  "canonical_path": "/Users/bekirdag/Documents/apps/qif",
-  "created_at_epoch_ms": 1769949145999,
-  "last_seen_at_epoch_ms": 1769949145999
+  "fingerprint_sha256": "3b1f5a40f836e443fef1143e5a17f56fbb49b13673c28f020f47f313d2c0036d",
+  "canonical_path": "/home/wodo/apps/qif-geodesic-noise",
+  "created_at_epoch_ms": 1769968187571,
+  "last_seen_at_epoch_ms": 1769968251230
 }

@@ -157,6 +157,7 @@ python scripts/plot_paper_figures.py validation --runs-dir test-runs --out-dir f
 
 This will attempt to write:
 - `figures/lr_vs_bins.png`
+- `figures/lr_per_bin.png`
 - `figures/lr_by_dataset.png`
 - `figures/bootstrap_p_values.png`
 - `figures/stress_variants.png`
@@ -170,9 +171,13 @@ python scripts/plot_paper_figures.py psd --out figures/model_psd.png
 Generate an injection sweep CSV and plot it:
 
 ```
-python scripts/run_injection_test.py --alpha-grid 0,0.1,0.3,1,3 --out-csv test-runs/injection_sweep.csv
+python scripts/run_injection_test.py --alpha-logspace -8 2 15 --out-csv test-runs/injection_sweep.csv
 python scripts/plot_paper_figures.py injection --csv test-runs/injection_sweep.csv --out figures/injection_curve.png --logx
 ```
+
+Notes:
+- `--logx` auto-skips non-positive alpha values.
+- Use `--symlog` instead of `--logx` if you need to include alpha=0.
 
 ## Findings so far (summary)
 

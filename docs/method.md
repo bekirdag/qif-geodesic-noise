@@ -102,6 +102,7 @@ The script reports:
 - Start with short `--max-seconds` and small `--max-bins` for tuning.
 - Use line masks and transfer functions once the pipeline is stable.
 - Increase `--n-starts` and `--max-iter` for more stable fits.
+- If LR is consistently negative, try more starts and consider warm-starting the signal fit from the env-only solution (alpha ~ 0).
 - For GPU use, run `qif_v2_cuda.py` and set `--device auto` or `--device gpu`.
 
 
@@ -110,10 +111,10 @@ The script reports:
 Use the scripts in `scripts/` to confirm:
 
 - Resolution sensitivity (sweep `--max-bins`).
+- When comparing different `--max-bins`, also report LR per bin (LR / N_bins) to normalize for bin count.
 - Line masks and transfer functions are applied correctly.
 - Bootstrap p-values behave as expected under the null.
 - Rank-2 and calibration-variant stress tests are stable.
-- Synthetic injection recovery yields positive LR when the signal is present.
+- Synthetic injection recovery yields positive LR when the signal is present; for threshold curves sweep alpha over orders of magnitude.
 
 All logs should be saved under `test-runs/`.
-

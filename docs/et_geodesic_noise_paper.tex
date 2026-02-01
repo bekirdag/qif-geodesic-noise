@@ -175,11 +175,14 @@ We calibrate the likelihood-ratio statistic with a \textbf{parametric bootstrap}
 \section{Validation plan (mandatory)}
 
 \noindent\textbf{Pass/fail criteria (minimum):}
-\begin{itemize}
-  \item \textbf{False-alarm control:} empirical $p$-value distribution under null must be uniform to within $\pm10\%$ over $p\in[0.1,0.9]$. [1,3]
-  \item \textbf{Injection efficiency:} $>90\%$ detection efficiency at a pre-defined $A_h$ threshold with $\gamma=2$, under both rank-1 and rank-2 environmental models. [1,3]
-  \item \textbf{Stability:} LR statistic must not shift by more than $10\%$ under alternative knot placements or bootstrap modes. [1,3]
+\begin{itemize}[leftmargin=1.5em]
+\item \textbf{False-alarm control:} empirical p-value distribution under null must be uniform to within $\pm 10\%$ over $p\in[0.1,0.9]$. \cite{r1,r3}
+\item \textbf{Injection efficiency:} $>90\%$ detection efficiency at a pre-defined $A_h$ threshold with $\gamma=2$, under both rank-1 and rank-2 environmental models; for threshold curves, sweep $A_h$ over orders of magnitude. \cite{r1,r3}
+\item \textbf{Stability:} LR statistic must not shift by more than $10\%$ under alternative knot placements or bootstrap modes; when comparing different bin counts, report LR per bin. \cite{r1,r3}
 \end{itemize}
+
+\noindent\textbf{Interpretation note:} inspect bootstrap LR distributions (not just p-values) and use sufficient bootstrap counts for resolution. \cite{r3,r15}
+\noindent\textbf{Nestedness check:} ensure the signal fit can reach $\alpha\approx 0$ (warm-start from the env fit); persistent negative LR indicates optimization or constraint issues. \cite{r3,r15}
 
 \section{Confrontation with existing constraints}
 
@@ -394,5 +397,4 @@ python scripts/run_injection_test.py
 \url{https://github.com/bekirdag/qif-geodesic-noise}
 
 \end{enumerate}
-
 \end{document}

@@ -140,6 +140,33 @@ def _plot_lr_vs_bins(rows: list[dict], out_path: str) -> bool:
     return True
 
 
+def _plot_lr_per_bin(rows: list[dict], out_path: str) -> bool:
+    bins_to_lr = defaultdict(list)
+    for row in rows:
+        bins = row.get("BINS")
+        lr = row.get("LR")
+        if bins is None or lr is None or bins == 0:
+            continue
+        bins_to_lr[bins].append(lr / bins)
+
+    if not bins_to_lr:
+        return False
+
+    bins_sorted = sorted(bins_to_lr)
+    lr_vals = [float(np.median(bins_to_lr[b])) for b in bins_sorted]
+
+    plt.figure(figsize=(6, 4))
+    plt.plot(bins_sorted, lr_vals, marker="o")
+    plt.xlabel("Bins")
+    plt.ylabel("LR / bin (median across groups)")
+    plt.title("Resolution Sensitivity (Normalized LR)")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=200)
+    plt.close()
+    return True
+
+
 def _plot_lr_by_dataset(rows: list[dict], out_path: str) -> bool:
     rows_by_source = defaultdict(list)
     for row in rows:
@@ -361,6 +388,9 @@ def main() -> None:
         outputs = []
         outputs.append(
             _plot_lr_vs_bins(standard_rows, os.path.join(args.out_dir, "lr_vs_bins.png"))
+        )
+        outputs.append(
+            _plot_lr_per_bin(standard_rows, os.path.join(args.out_dir, "lr_per_bin.png"))
         )
         outputs.append(
             _plot_lr_by_dataset(standard_rows, os.path.join(args.out_dir, "lr_by_dataset.png"))
