@@ -23,6 +23,10 @@ figures/
 test-runs/20*-*/
 test-runs/*.csv
 repo_meta.json
+/bootstrap_p_values.png
+/injection_curve.png
+/lr_by_dataset.png
+/lr_vs_bins.png
 
 # OS/editor noise
 .DS_Store
