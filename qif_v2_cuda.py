@@ -420,7 +420,11 @@ def loglike_et_qif_cuda(
         else:
             Sigma_qif = xp.zeros((3, 3), dtype=complex)
 
-        G = xp.diag([1.0, xp.exp(1j * phi_23[k, 0]), xp.exp(1j * phi_23[k, 1])]).astype(complex)
+        g = xp.empty((3,), dtype=complex)
+        g[0] = 1.0 + 0.0j
+        g[1] = xp.exp(1j * phi_23[k, 0])
+        g[2] = xp.exp(1j * phi_23[k, 1])
+        G = xp.diag(g)
         Sigma = G @ (Sigma_inst + Sigma_env + Sigma_qif) @ G.conj().T
 
         Sigma = hermitize_xp(Sigma, xp)
@@ -516,7 +520,11 @@ def _build_sigma_stack_cuda(
         else:
             Sigma_qif = xp.zeros((3, 3), dtype=complex)
 
-        G = xp.diag([1.0, xp.exp(1j * phi_23[k, 0]), xp.exp(1j * phi_23[k, 1])]).astype(complex)
+        g = xp.empty((3,), dtype=complex)
+        g[0] = 1.0 + 0.0j
+        g[1] = xp.exp(1j * phi_23[k, 0])
+        g[2] = xp.exp(1j * phi_23[k, 1])
+        G = xp.diag(g)
         Sigma_k = G @ (Sigma_inst + Sigma_env + Sigma_qif) @ G.conj().T
         Sigma[k] = hermitize_xp(Sigma_k, xp)
     return Sigma
