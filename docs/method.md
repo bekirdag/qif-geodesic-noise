@@ -104,3 +104,16 @@ The script reports:
 - Increase `--n-starts` and `--max-iter` for more stable fits.
 - For GPU use, run `qif_v2_cuda.py` and set `--device auto` or `--device gpu`.
 
+
+## 11) Validation checklist
+
+Use the scripts in `scripts/` to confirm:
+
+- Resolution sensitivity (sweep `--max-bins`).
+- Line masks and transfer functions are applied correctly.
+- Bootstrap p-values behave as expected under the null.
+- Rank-2 and calibration-variant stress tests are stable.
+- Synthetic injection recovery yields positive LR when the signal is present.
+
+All logs should be saved under `test-runs/`.
+

@@ -1,0 +1,4 @@
+# Example line mask (Hz). Replace with real line list for ET data.
+# Format: f_min f_max (whitespace or comma separated)
+60 61
+120 121

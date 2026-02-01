@@ -176,6 +176,14 @@ We calibrate the likelihood‑ratio statistic with a **parametric bootstrap**. [
 - **Injection efficiency:** >90% detection efficiency at a pre‑defined \(A_h\) threshold with \(\gamma=2\), under both rank‑1 and rank‑2 environmental models. [1,3]
 - **Stability:** LR statistic must not shift by more than 10% under alternative knot placements or bootstrap modes. [1,3]
 
+### 8.1 Implementation checklist (required)
+
+- **Resolution sweep:** re‑run with higher `--max-bins` to verify LR stability under increased frequency resolution. [1,3]
+- **Line masks + transfer functions:** apply line masks and calibration/transfer functions to check robustness against lines and calibration structure. [1,3,15,21]
+- **Bootstrap p‑values:** compute p‑values with `--bootstrap` to quantify consistency with the null. [3,15]
+- **Rank‑2 stress test:** repeat fits with `--stress-rank2` to test sensitivity to environmental model rank. [3,15]
+- **Synthetic injection recovery:** inject a known QIF component and verify LR becomes positive under controlled conditions. [1,3]
+
 ---
 
 ## 9. Confrontation with existing constraints

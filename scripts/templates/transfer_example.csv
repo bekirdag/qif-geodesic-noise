@@ -1,0 +1,5 @@
+# Example transfer function (Hz, |T|^2). Replace with real calibration data.
+# If using |T| (not squared), omit --transfer-sq in the script below.
+10,1.0
+100,1.0
+1000,1.0

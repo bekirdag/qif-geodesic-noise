@@ -104,6 +104,19 @@ Force GPU:
 python qif_v2_cuda.py --data-root data --device gpu --max-seconds 128 --max-bins 128 --fit --fit-phi
 ```
 
+## Validation scripts
+
+The `scripts/` directory includes helper scripts that implement the recommended validation checks:
+
+- `scripts/run_sensitivity_sweep.sh` - sweep `--max-bins` to test resolution sensitivity
+- `scripts/run_bootstrap.sh` - compute bootstrap p-values
+- `scripts/run_stress_tests.sh` - rank-2 and calibration-variant stress tests
+- `scripts/run_line_mask_transfer.sh` - apply line masks and transfer functions (templates provided)
+- `scripts/run_injection_test.py` - synthetic injection recovery test
+- `scripts/run_validation_suite.sh` - runs the full set in sequence
+
+All scripts write logs to `test-runs/` in timestamped folders.
+
 ## Findings so far (summary)
 
 All runs were performed on **ET-MDC1 loudest sample sets**:

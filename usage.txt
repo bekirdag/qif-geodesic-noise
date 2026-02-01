@@ -56,3 +56,22 @@ Notes
 -----
 - The download script uses BASE_URL=http://et-origin.cism.ucl.ac.be/ by default.
 - If your system CUDA version is unknown, run `nvidia-smi` to check it.
+
+Validation scripts
+------------------
+From the repo root:
+
+1) Sensitivity sweep (resolution test)
+   ./scripts/run_sensitivity_sweep.sh
+
+2) Bootstrap p-values
+   ./scripts/run_bootstrap.sh
+
+3) Stress tests (rank2 + calib variants)
+   ./scripts/run_stress_tests.sh
+
+4) Line mask + transfer function
+   ./scripts/run_line_mask_transfer.sh
+
+5) Synthetic injection recovery
+   ./scripts/run_injection_test.py
