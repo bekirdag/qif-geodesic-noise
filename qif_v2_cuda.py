@@ -1,5 +1,6 @@
 import argparse
 import os
+import sys
 from dataclasses import dataclass, replace
 
 import numpy as np
@@ -43,6 +44,155 @@ class Backend:
         if self.is_cuda:
             return self.xp.asnumpy(arr)
         return np.asarray(arr)
+
+
+class Ansi:
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    DIM = "\033[2m"
+    FG_BLUE = "\033[38;5;39m"
+    FG_CYAN = "\033[38;5;87m"
+    FG_GREEN = "\033[38;5;40m"
+    FG_RED = "\033[38;5;196m"
+    FG_YELLOW = "\033[38;5;220m"
+    FG_MAGENTA = "\033[38;5;177m"
+    FG_GRAY = "\033[38;5;245m"
+    FG_ORANGE = "\033[38;5;208m"
+
+
+def _colorize(text: str, color: str | None, enabled: bool, bold: bool = False) -> str:
+    if not enabled or not color:
+        return text
+    prefix = Ansi.BOLD if bold else ""
+    return f"{prefix}{color}{text}{Ansi.RESET}"
+
+
+def _format_cell(col: str, value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        if col in {"P", "P_SE"}:
+            return f"{value:.4f}"
+        return f"{value:.6e}"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    return str(value)
+
+
+def _color_for_cell(col: str, value) -> str | None:
+    if col == "DATASET":
+        return Ansi.FG_CYAN
+    if col == "GPS":
+        return Ansi.FG_GRAY
+    if col == "BINS":
+        return Ansi.FG_BLUE
+    if col in {"LNL_ENV", "LNL_QIF", "LOGL"}:
+        return Ansi.FG_ORANGE
+    if col in {"P", "P_SE"}:
+        return Ansi.FG_MAGENTA
+    if col == "FIT_PHI":
+        return Ansi.FG_GREEN if value else Ansi.FG_YELLOW
+    if col == "LR":
+        if value is None:
+            return None
+        if value > 0:
+            return Ansi.FG_GREEN
+        if value < 0:
+            return Ansi.FG_RED
+        return Ansi.FG_YELLOW
+    if col == "VARIANT":
+        return Ansi.FG_BLUE
+    return None
+
+
+def _render_table(headers: list[str], rows: list[dict], use_color: bool) -> str:
+    if not rows:
+        return ""
+    widths = []
+    for h in headers:
+        max_len = len(h)
+        for r in rows:
+            s = _format_cell(h, r.get(h))
+            if len(s) > max_len:
+                max_len = len(s)
+        widths.append(max_len)
+
+    def border(ch: str) -> str:
+        return "+" + "+".join(ch * (w + 2) for w in widths) + "+"
+
+    out = [border("-")]
+    header_cells = []
+    for h, w in zip(headers, widths):
+        header_cells.append(_colorize(h.ljust(w), Ansi.FG_BLUE, use_color, bold=True))
+    out.append("| " + " | ".join(header_cells) + " |")
+    out.append(border("="))
+    for r in rows:
+        cells = []
+        for h, w in zip(headers, widths):
+            raw = r.get(h)
+            txt = _format_cell(h, raw).ljust(w)
+            cells.append(_colorize(txt, _color_for_cell(h, raw), use_color))
+        out.append("| " + " | ".join(cells) + " |")
+    out.append(border("-"))
+    return "\n".join(out)
+
+
+def _print_summary(
+    *,
+    backend: Backend,
+    rows: list[dict],
+    fit: bool,
+    fit_phi: bool,
+    max_seconds: float,
+    nperseg_seconds: float,
+    overlap: float,
+    fmin_hz: float,
+    fmax_hz: float | None,
+    n_coeff: int,
+    r: int,
+    bootstrap_n: int,
+    use_color: bool,
+) -> None:
+    icon_run = ""
+    icon_gpu = ""
+    icon_info = ""
+    icon_note = ""
+    backend_text = f"{backend.name} ({'cuda' if backend.is_cuda else 'cpu'})"
+    header = _colorize("Run Summary", Ansi.FG_BLUE, use_color, bold=True)
+    print(header)
+    print(
+        _colorize(f"{icon_gpu} Backend:", Ansi.FG_CYAN, use_color)
+        + f" {backend_text}"
+    )
+    print(
+        _colorize(f"{icon_run} Run:", Ansi.FG_GREEN, use_color)
+        + f" groups={len(rows)} max_seconds={max_seconds} nperseg={nperseg_seconds} overlap={overlap} "
+        + f"fmin={fmin_hz} fmax={fmax_hz or 'nyquist'} n_coeff={n_coeff} r={r} fit={fit} fit_phi={fit_phi} "
+        + f"bootstrap={bootstrap_n}"
+    )
+    if fit:
+        lr_vals = [r["LR"] for r in rows if r.get("LR") is not None]
+        pos = sum(1 for v in lr_vals if v > 0)
+        neg = sum(1 for v in lr_vals if v < 0)
+        zero = sum(1 for v in lr_vals if v == 0)
+        print(
+            _colorize(f"{icon_note} Results:", Ansi.FG_YELLOW, use_color)
+            + f" LR>0: {pos}  LR<0: {neg}  LR=0: {zero}"
+        )
+        print(
+            _colorize(f"{icon_info} Meaning:", Ansi.FG_MAGENTA, use_color)
+            + " LR > 0 suggests the signal model improves fit; LR < 0 suggests no support under current settings."
+        )
+        if bootstrap_n > 0:
+            print(
+                _colorize(f"{icon_info} Bootstrap:", Ansi.FG_MAGENTA, use_color)
+                + " p-values estimate tail probability under the null (smaller p = stronger evidence)."
+            )
+    else:
+        print(
+            _colorize(f"{icon_info} Meaning:", Ansi.FG_MAGENTA, use_color)
+            + " loglike only (no fitting). Use --fit to compare H_env vs H_sig."
+        )
 
 
 def _try_import_cupy():
@@ -830,6 +980,8 @@ def run_on_sample_data_cuda(
     n_starts: int = 3,
     bootstrap_mode: str = "round",
     backend: Backend | None = None,
+    pretty: bool = True,
+    use_color: bool = True,
 ) -> None:
     if backend is None:
         backend = Backend(np, "numpy", False)
@@ -837,6 +989,8 @@ def run_on_sample_data_cuda(
     if not groups:
         print(f"No .gwf files found under {data_root}.")
         return
+    rows: list[dict] = []
+    variants: list[dict] = []
     for group in groups:
         results = _run_loglike_on_group_cuda(
             group,
@@ -868,19 +1022,95 @@ def run_on_sample_data_cuda(
         )
         label = group["set"] or "data"
         if "loglike" in results:
-            print(f"{label} gps={group['gps']} loglike_et_qif={results['loglike']:.6e}")
+            if not pretty:
+                print(f"{label} gps={group['gps']} loglike_et_qif={results['loglike']:.6e}")
+            rows.append(
+                {
+                    "DATASET": label,
+                    "GPS": group["gps"],
+                    "BINS": results["freq_bins"],
+                    "LOGL": float(results["loglike"]),
+                }
+            )
             continue
         base = results["baseline"]
-        line = f"{label} gps={group['gps']} bins={results['freq_bins']} r={base['r']} lr={base['lr']:.6e}"
+        if not pretty:
+            line = f"{label} gps={group['gps']} bins={results['freq_bins']} r={base['r']} lr={base['lr']:.6e}"
+            if "p_value" in base:
+                line += f" p={base['p_value']:.4f}±{base['p_se']:.4f}"
+            print(line)
+        row = {
+            "DATASET": label,
+            "GPS": group["gps"],
+            "BINS": results["freq_bins"],
+            "R": base["r"],
+            "FIT_PHI": base["fit_phi"],
+            "LNL_ENV": base["lnL_env"],
+            "LNL_QIF": base["lnL_qif"],
+            "LR": base["lr"],
+        }
         if "p_value" in base:
-            line += f" p={base['p_value']:.4f}±{base['p_se']:.4f}"
-        print(line)
+            row["P"] = base["p_value"]
+            row["P_SE"] = base["p_se"]
+        rows.append(row)
         if "stress_rank2" in results:
             r2 = results["stress_rank2"]
-            print(f"  rank2 stress: lr={r2['lr']:.6e}")
+            if not pretty:
+                print(f"  rank2 stress: lr={r2['lr']:.6e}")
+            variants.append(
+                {
+                    "DATASET": label,
+                    "GPS": group["gps"],
+                    "VARIANT": "rank2",
+                    "LR": r2["lr"],
+                }
+            )
         if "calib_phi_fixed" in results:
             cv = results["calib_phi_fixed"]
-            print(f"  phi_fixed: lr={cv['lr']:.6e}")
+            if not pretty:
+                print(f"  phi_fixed: lr={cv['lr']:.6e}")
+            variants.append(
+                {
+                    "DATASET": label,
+                    "GPS": group["gps"],
+                    "VARIANT": "phi_fixed",
+                    "LR": cv["lr"],
+                }
+            )
+
+    if not pretty:
+        return
+
+    has_fit = any("LR" in r for r in rows)
+    if has_fit:
+        headers = ["DATASET", "GPS", "BINS", "R", "FIT_PHI", "LNL_ENV", "LNL_QIF", "LR", "P", "P_SE"]
+    else:
+        headers = ["DATASET", "GPS", "BINS", "LOGL"]
+    table = _render_table(headers, rows, use_color)
+    if table:
+        print(table)
+
+    if variants:
+        var_headers = ["DATASET", "GPS", "VARIANT", "LR"]
+        var_table = _render_table(var_headers, variants, use_color)
+        if var_table:
+            print(var_table)
+
+    _print_summary(
+        backend=backend,
+        rows=rows,
+        fit=fit,
+        fit_phi=fit_phi,
+        max_seconds=max_seconds,
+        nperseg_seconds=nperseg_seconds,
+        overlap=overlap,
+        fmin_hz=fmin_hz,
+        fmax_hz=fmax_hz,
+        n_coeff=n_coeff,
+        r=r,
+        bootstrap_n=bootstrap_n,
+        use_color=use_color,
+    )
 
 
 def run_synthetic_cuda(backend: Backend) -> None:
@@ -948,10 +1178,16 @@ def main() -> None:
                         help="How to convert fractional m_eff to integer m* in bootstrap.")
     parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "gpu"],
                         help="Array backend: auto uses CUDA if available, else CPU.")
+    parser.add_argument("--plain", action="store_true", help="Disable tables and use legacy line output.")
+    parser.add_argument("--no-color", action="store_true", help="Disable ANSI colors in output.")
     args = parser.parse_args()
 
     backend = get_backend(args.device)
-    print(f"Backend: {backend.name}")
+    use_color = not args.no_color
+    pretty = not args.plain
+    if not sys.stdout.isatty():
+        use_color = use_color and pretty
+    print(_colorize(f"Backend: {backend.name}", Ansi.FG_CYAN, use_color, bold=True))
 
     if args.synthetic:
         run_synthetic_cuda(backend)
@@ -995,6 +1231,8 @@ def main() -> None:
         n_starts=args.n_starts,
         bootstrap_mode=args.bootstrap_mode,
         backend=backend,
+        pretty=pretty,
+        use_color=use_color,
     )
 
 
