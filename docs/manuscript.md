@@ -182,8 +182,10 @@ We calibrate the likelihood‑ratio statistic with a **parametric bootstrap**. [
 - **Normalized LR:** when comparing different `--max-bins`, also report LR per bin (LR / N_bins) to separate resolution effects from count effects. [1,3]
 - **Line masks + transfer functions:** apply line masks and calibration/transfer functions to check robustness against lines and calibration structure. [1,3,15,21]
 - **Bootstrap p‑values:** compute p‑values with `--bootstrap` to quantify consistency with the null. [3,15]
+- **Bootstrap LR distribution:** inspect the bootstrap LR distribution (not just p-values) and increase bootstrap counts for adequate resolution. [3,15]
+- **Nestedness check:** ensure the QIF fit can reach \(\alpha\approx 0\) (warm-start from the env fit); persistent negative LR indicates optimization or constraint issues. [3,15]
 - **Rank‑2 stress test:** repeat fits with `--stress-rank2` to test sensitivity to environmental model rank. [3,15]
-- **Synthetic injection recovery:** inject a known QIF component and verify LR becomes positive under controlled conditions; for threshold curves, sweep \(A_h\) over orders of magnitude. [1,3]
+- **Synthetic injection recovery:** inject a known QIF component and verify LR becomes positive under controlled conditions; for threshold curves, sweep \(A_h\) over orders of magnitude and consider reduced env flexibility. [1,3]
 
 ---
 

@@ -9,6 +9,9 @@ from scipy.interpolate import BSpline
 from scipy.signal import medfilt
 from scipy.optimize import minimize
 
+ALPHA_LOG_MIN = -80.0
+ALPHA_LOG_MAX = 20.0
+
 
 # ---------------------------
 # Utilities
@@ -808,7 +811,7 @@ def _unpack_params(
 def _default_bounds(n_coeff: int, r: int, fit_alpha: bool, fit_phi: bool) -> list[tuple[float, float] | None]:
     bounds: list[tuple[float, float] | None] = []
     if fit_alpha:
-        bounds.append((-20.0, 20.0))
+        bounds.append((ALPHA_LOG_MIN, ALPHA_LOG_MAX))
     bounds.extend([(-10.0, 10.0)] * n_coeff)           # rho logits
     bounds.extend([(-30.0, 30.0)] * (n_coeff * 3))     # log P
     bounds.extend([(-1e3, 1e3)] * (n_coeff * 3 * r))    # B real
@@ -841,9 +844,22 @@ def fit_model(
     max_iter: int = 200,
     n_starts: int = 3,
     seed: int | None = None,
+    init_params: dict | None = None,
+    alpha_init: float | None = None,
 ) -> tuple[dict, float]:
     rho_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs = _build_initial_coeffs(S_hat, n_coeff, r)
+    if init_params is not None:
+        rho_coeffs = init_params.get("rho_coeffs", rho_coeffs)
+        P_coeffs = init_params.get("P_coeffs", P_coeffs)
+        B_real_coeffs = init_params.get("B_real_coeffs", B_real_coeffs)
+        B_imag_coeffs = init_params.get("B_imag_coeffs", B_imag_coeffs)
+        phi_coeffs = init_params.get("phi_coeffs", phi_coeffs)
+
     alpha_val = float(np.log(1.0))
+    if alpha_init is not None:
+        alpha_val = float(alpha_init)
+    if fit_alpha:
+        alpha_val = float(np.clip(alpha_val, ALPHA_LOG_MIN, ALPHA_LOG_MAX))
 
     bounds = _default_bounds(n_coeff, r, fit_alpha, fit_phi)
 
@@ -1024,7 +1040,8 @@ def bootstrap_lr(
         S_hat, m_eff, freqs, f_min, f_max, knots, P_floor, B_clip, n_coeff, r,
         L=L, c0=c0, lP=lP, T_over_f2_avg=T_over_f2_avg, T_over_fgamma_avg=T_over_fgamma_avg, gamma=gamma,
         use_planck_scale=use_planck_scale,
-        fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=seed
+        fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=seed,
+        init_params=env_params, alpha_init=ALPHA_LOG_MIN
     )
     lr_obs = 2.0 * (lnL_qif - lnL_env)
 
@@ -1072,7 +1089,8 @@ def bootstrap_lr(
                 S_hat_b, m_eff, freqs, f_min, f_max, knots, P_floor, B_clip, n_coeff, r,
                 L=L, c0=c0, lP=lP, T_over_f2_avg=T_over_f2_avg, T_over_fgamma_avg=T_over_fgamma_avg, gamma=gamma,
                 use_planck_scale=use_planck_scale,
-                fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=seed + i + 1
+                fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=seed + i + 1,
+                init_params=env_b, alpha_init=ALPHA_LOG_MIN
             )
         else:
             lnL_env_b = loglike_et_qif(
@@ -1262,7 +1280,8 @@ def _run_loglike_on_group(
         T_over_f2_avg=T_over_f2_avg,
         T_over_fgamma_avg=T_over_fgamma_avg,
         gamma=gamma,
-        fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=group["gps"]
+        fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=group["gps"],
+        init_params=env_params, alpha_init=ALPHA_LOG_MIN
     )
     lr = 2.0 * (lnL_qif - lnL_env)
     results["baseline"] = {
@@ -1325,7 +1344,8 @@ def _run_loglike_on_group(
             T_over_f2_avg=T_over_f2_avg,
             T_over_fgamma_avg=T_over_fgamma_avg,
             gamma=gamma,
-            fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=group["gps"] + 2
+            fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=group["gps"] + 2,
+            init_params=env_params2, alpha_init=ALPHA_LOG_MIN
         )
         lr2 = 2.0 * (lnL_qif2 - lnL_env2)
         results["stress_rank2"] = {
@@ -1357,7 +1377,8 @@ def _run_loglike_on_group(
             T_over_f2_avg=T_over_f2_avg,
             T_over_fgamma_avg=T_over_fgamma_avg,
             gamma=gamma,
-            fit_alpha=True, fit_phi=False, max_iter=max_iter, n_starts=n_starts, seed=group["gps"] + 3
+            fit_alpha=True, fit_phi=False, max_iter=max_iter, n_starts=n_starts, seed=group["gps"] + 3,
+            init_params=env_params0, alpha_init=ALPHA_LOG_MIN
         )
         lr0 = 2.0 * (lnL_qif0 - lnL_env0)
         results["calib_phi_fixed"] = {

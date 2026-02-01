@@ -11,6 +11,7 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 from qif_v2 import (
+    ALPHA_LOG_MIN,
     _make_synthetic_data,
     _build_sigma_stack,
     sample_covariance_from_sigma,
@@ -171,6 +172,8 @@ def main() -> None:
             max_iter=args.max_iter,
             n_starts=args.n_starts,
             seed=args.seed,
+            init_params=env_params,
+            alpha_init=ALPHA_LOG_MIN,
         )
 
         lr = 2.0 * (lnL_qif - lnL_env)

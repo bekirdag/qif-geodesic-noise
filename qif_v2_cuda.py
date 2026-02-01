@@ -9,6 +9,8 @@ from scipy.interpolate import BSpline
 from scipy.optimize import minimize
 
 from qif_v2 import (
+    ALPHA_LOG_MAX,
+    ALPHA_LOG_MIN,
     _build_initial_coeffs,
     _compute_welch_csd_matrix,
     _default_bounds,
@@ -582,11 +584,24 @@ def fit_model_cuda(
     n_starts: int,
     seed: int | None,
     backend: Backend,
+    init_params: dict | None = None,
+    alpha_init: float | None = None,
 ) -> tuple[dict, float]:
     rho_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs = _build_initial_coeffs(
         data.S_hat_cpu, n_coeff, r
     )
+    if init_params is not None:
+        rho_coeffs = init_params.get("rho_coeffs", rho_coeffs)
+        P_coeffs = init_params.get("P_coeffs", P_coeffs)
+        B_real_coeffs = init_params.get("B_real_coeffs", B_real_coeffs)
+        B_imag_coeffs = init_params.get("B_imag_coeffs", B_imag_coeffs)
+        phi_coeffs = init_params.get("phi_coeffs", phi_coeffs)
+
     alpha_val = float(np.log(1.0))
+    if alpha_init is not None:
+        alpha_val = float(alpha_init)
+    if fit_alpha:
+        alpha_val = float(np.clip(alpha_val, ALPHA_LOG_MIN, ALPHA_LOG_MAX))
 
     bounds = _default_bounds(n_coeff, r, fit_alpha, fit_phi)
     x0 = _pack_params(alpha_val, rho_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs, fit_alpha, fit_phi)
@@ -667,7 +682,8 @@ def bootstrap_lr_cuda(
     )
     qif_params, lnL_qif = fit_model_cuda(
         data, n_coeff, r, L, c0, lP, gamma, use_planck_scale,
-        fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=seed, backend=backend
+        fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=seed, backend=backend,
+        init_params=env_params, alpha_init=ALPHA_LOG_MIN
     )
     lr_obs = 2.0 * (lnL_qif - lnL_env)
 
@@ -700,7 +716,7 @@ def bootstrap_lr_cuda(
             qif_b, lnL_qif_b = fit_model_cuda(
                 data_b, n_coeff, r, L, c0, lP, gamma, use_planck_scale,
                 fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=seed + i + 1,
-                backend=backend
+                backend=backend, init_params=env_b, alpha_init=ALPHA_LOG_MIN
             )
         else:
             data_b = replace(data, S_hat_x=S_hat_b)
@@ -894,7 +910,8 @@ def _run_loglike_on_group_cuda(
     )
     qif_params, lnL_qif = fit_model_cuda(
         data_obj, n_coeff, r, L, c0, lP, gamma, use_planck_scale,
-        fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=group["gps"], backend=backend
+        fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=group["gps"], backend=backend,
+        init_params=env_params, alpha_init=ALPHA_LOG_MIN
     )
     lr = 2.0 * (lnL_qif - lnL_env)
     results["baseline"] = {
@@ -937,7 +954,7 @@ def _run_loglike_on_group_cuda(
         qif_params2, lnL_qif2 = fit_model_cuda(
             data_obj, n_coeff, 2, L, c0, lP, gamma, use_planck_scale,
             fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=group["gps"] + 2,
-            backend=backend
+            backend=backend, init_params=env_params2, alpha_init=ALPHA_LOG_MIN
         )
         lr2 = 2.0 * (lnL_qif2 - lnL_env2)
         results["stress_rank2"] = {
@@ -957,7 +974,7 @@ def _run_loglike_on_group_cuda(
         qif_params0, lnL_qif0 = fit_model_cuda(
             data_obj, n_coeff, r, L, c0, lP, gamma, use_planck_scale,
             fit_alpha=True, fit_phi=False, max_iter=max_iter, n_starts=n_starts, seed=group["gps"] + 3,
-            backend=backend
+            backend=backend, init_params=env_params0, alpha_init=ALPHA_LOG_MIN
         )
         lr0 = 2.0 * (lnL_qif0 - lnL_env0)
         results["calib_phi_fixed"] = {
