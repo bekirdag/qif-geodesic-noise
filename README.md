@@ -34,9 +34,16 @@ pip install -r requirements.txt
 GPU (optional, NVIDIA CUDA only):
 
 ```
-# Example (choose the CuPy build that matches your CUDA version)
-pip install cupy-cuda11x
+# Choose the CuPy build that matches your CUDA runtime
+# - CUDA 11.x: cupy-cuda11x
+# - CUDA 12.x: cupy-cuda12x
+pip install cupy-cuda12x
 ```
+
+CUDA requirements:
+- You must have a compatible NVIDIA driver and CUDA runtime libraries installed.
+- Check your CUDA version with `nvidia-smi` (look for "CUDA Version").
+- If you see `libnvrtc.so` errors, install the matching CUDA runtime (or switch to the correct CuPy wheel).
 
 ## Downloading the ET-MDC1 loudest samples
 
