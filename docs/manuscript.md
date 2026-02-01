@@ -262,6 +262,38 @@ A full‑data bootstrap at 128 s / 128 bins with \(n=20\) produced **p = 1.0000*
 A synthetic injection recovery test with \(\alpha=1.0\) produced **LR \(\approx 2.074083\times10^2\)**, confirming positive recovery when the signal is injected. [26]
 An injection sweep with \(\alpha=0.1,0.3,1.0\) yielded **LR \(\approx 2.07\times10^2\)** across all three amplitudes, confirming recoverability but not a detection threshold. [26]
 
+---
+
+## 10.3 CUDA reference implementation (excerpt)
+
+We include a minimal excerpt of the CUDA-capable driver to document the core execution path and reproducibility controls. [26]  
+The full implementation and validation logs are archived in the repository. [26]  
+
+```python
+def main() -> None:
+    parser = argparse.ArgumentParser(...)
+    parser.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "gpu"])
+    parser.add_argument("--synthetic", action="store_true")
+    args = parser.parse_args()
+
+    backend = get_backend(args.device)
+    if args.synthetic:
+        run_synthetic_cuda(backend)
+        return
+
+    run_on_sample_data_cuda(
+        args.data_root,
+        max_seconds=args.max_seconds,
+        max_bins=args.max_bins,
+        fit=args.fit,
+        fit_phi=args.fit_phi,
+        bootstrap_n=args.bootstrap,
+        backend=backend,
+    )
+```
+
+This excerpt captures the GPU backend selection, synthetic mode, and the main data-run path. [26]
+
 ## References
 
 1. Data Analysis Challenges for the Einstein Telescope (arXiv:0910.0380). https://arxiv.org/abs/0910.0380
@@ -289,4 +321,4 @@ An injection sweep with \(\alpha=0.1,0.3,1.0\) yielded **LR \(\approx 2.07\times
 23. Stochastic Gravity Wave Background in Inflationary Universe Models (DOI:10.1103/PhysRevD.37.2078). https://doi.org/10.1103/PhysRevD.37.2078
 24. The constraints of post‑quantum classical gravity (arXiv:1707.06050). https://arxiv.org/abs/1707.06050
 25. Mock data challenge for the Einstein Gravitational‑Wave Telescope (Phys. Rev. D 86, 122001). https://doi.org/10.1103/PhysRevD.86.122001
-26. QIF geodesic‑noise repository validation logs (GitHub). https://github.com/bekirdag/qif-geodesic-noise/tree/main/test-runs
+26. QIF geodesic‑noise repository (code + validation logs) (GitHub). https://github.com/bekirdag/qif-geodesic-noise

@@ -104,6 +104,30 @@ Force GPU:
 python qif_v2_cuda.py --data-root data --device gpu --max-seconds 128 --max-bins 128 --fit --fit-phi
 ```
 
+## Adjustment and fine-tuning logic
+
+Use short runs to tune hyperparameters, then scale up:
+
+- Start small: lower `--max-seconds` and `--max-bins` to validate IO and fit stability.
+- Increase resolution: raise `--max-bins` to test sensitivity and stability.
+- Optimize fits: increase `--max-iter` and `--n-starts` if the fit is unstable.
+- Control leakage: adjust `--nperseg-seconds` and `--overlap` (Welch settings).
+- Robustness: add `--bootstrap`, `--stress-rank2`, and `--calib-variants`.
+- Data hygiene: apply `--line-mask` and `--transfer-csv` when available.
+
+Example tuning sequence:
+
+```
+# Fast smoke test
+python qif_v2_cuda.py --data-root data/BBH_snr_306 --device auto --max-seconds 64 --max-bins 64
+
+# Short fit with phases
+python qif_v2_cuda.py --data-root data/BBH_snr_306 --device auto --max-seconds 128 --max-bins 128 --fit --fit-phi --max-iter 120 --n-starts 2
+
+# Full-duration, higher resolution
+python qif_v2_cuda.py --data-root data --device auto --max-seconds 2048 --max-bins 512 --fit --fit-phi --max-iter 120 --n-starts 2
+```
+
 ## Validation scripts
 
 The `scripts/` directory includes helper scripts that implement the recommended validation checks:
