@@ -179,42 +179,36 @@ Notes:
 - `--logx` auto-skips non-positive alpha values.
 - Use `--symlog` instead of `--logx` if you need to include alpha=0.
 
-## Findings so far (summary)
+## Findings (v0.2, corrected pipeline)
 
-All runs were performed on **ET-MDC1 loudest sample sets**:
+**The v0.1 results (identical negative LR across all groups, bootstrap p=1.0) are
+withdrawn.** They were artifacts of scale-inappropriate parameter bounds/clips that
+pinned every fit at a data-independent corner solution; the optimizer never consumed
+the data. See `test-runs/20260702_v02_corrected_pipeline.md` for the full postmortem
+and `docs/et_geodesic_noise_paper_v0.2.pdf` (Appendix A) for the write-up.
 
-- BBH_snr_306, BBH_snr_344, BBH_snr_379, BBH_snr_387, BBH_snr_587
-- BNS_snr_379
+v0.2 fixes (in `qif_v2.py`, mirrored in `qif_v2_cuda.py`): data-adaptive parameter
+bounds, overflow-only clips, warm-started nested fits with cross-pollination
+(`fit_nested_pair`, guarantees LR >= 0), 1-D profile-scan seeding of the signal
+amplitude, scale-aware multistarts, vectorized Wishart likelihood (~40x faster),
+`n_coeff` default raised to 20 (too few spline coefficients let the f^-2 term absorb
+PSD misfit and fake a signal).
 
-Key observations from CPU runs:
+Key v0.2 results on ET-MDC1 loudest sets (CPU, 128 s / 128 bins, n_coeff=20):
 
-- **Smoke test (64 s / 64 bins, no fit)**: identical log-likelihood across all groups (~7.857e4).
-- **Short fit (64 s / 64 bins, fit only)**: LR ~ -1.023e3 for BBH_snr_306.
-- **Short fit w/ phase (128 s / 128 bins)**: LR ~ -4.640e3 for BBH_snr_306.
-- **Full-data run (128 s / 128 bins)**: identical LR (~-4.640e3) across all groups.
-- **Full-duration run (2048 s / 512 bins)**: identical LR (~-3.568e5) across all groups.
+- Per-group LR now non-negative, data-dependent, O(1-8) for 7/8 groups; the first
+  BNS_snr_379 segment shows LR=51.5 (expected CBC contamination of "loudest" data).
+- Bootstrap (BBH_snr_306): p=0.073 at 64 s; p=0.048±0.048 at 128 s (config-matched).
+- Injection recovery on real-data-conditioned resamples: reliable from ~8x the naive
+  Fisher scale (~6e-47 Hz^-1 at 64 s); recovered amplitude tracks injection.
+- Profile-likelihood upper limit: A_h(95%) = 2.2e-47 Hz^-1 (BBH_snr_306, 128 s).
+- Null stream (E1+E2+E3) = sqrt(3) x single channel: MDC1 channel noise independent.
+- Fisher forecast: A_h(95%) ~ 3.8e-49 Hz^-1 per 2048 s, ~3e-51 Hz^-1 per year —
+  12-16 orders below existing bounds; the Planck random-walk benchmark (alpha=1)
+  is currently allowed and would be decisively tested.
 
-Interpretation:
-- Under current settings, the geodesic-diffusion term is **not favored** (negative LR).
-- Identical LR values across groups suggest either (a) the data windows are effectively identical in
-  the statistics used, or (b) sensitivity is still limited at current settings.
-
-Planned next-pass improvements:
-- Increase resolution (`--max-bins`) where feasible.
-- Apply line masks and response/transfer corrections.
-- Test rank-2 environmental models and bootstrap modes.
-
-## Validation results (GPU, RTX 3090)
-
-These are user-reported validation runs recorded under `test-runs/`:
-
-- **Resolution sweep (2048 s, r=1)**: LR remains negative and grows in magnitude as bins increase (128/256/512).
-- **Bootstrap (n=50)**: p=1.0000 at 128 s / 128 bins (consistent with null under current settings).
-- **Bootstrap (n=20, all groups)**: p=1.0000 across all groups at 128 s / 128 bins.
-- **Stress tests**: rank-2 and phi-fixed variants match the baseline LR.
-- **Line mask + transfer (template)**: LR remains negative and close to baseline.
-- **Synthetic injection recovery**: positive LR (2.074083e+02) for injected alpha=1.0.
-- **Synthetic injection sweep**: alpha=0.1/0.3/1.0 all yield positive LR (~2.07e+02), confirming recoverability (not a threshold).
+These runs use deliberately CBC-loud synthetic data and are a pipeline shakedown,
+not statements about nature.
 
 ## Manuscript and method
 

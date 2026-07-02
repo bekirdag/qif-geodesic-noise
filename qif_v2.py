@@ -266,9 +266,12 @@ def loglike_et_qif(
     # numerics
     eps: float = 1e-9,
     jitter_floor: float = 1e-50,
-    clip_logP: float = 50.0,
+    # Overflow guards only: exp() overflows near 709. These clips must NOT act as
+    # physical priors -- strain PSDs live at log P ~ -108, so tight clips silently
+    # clamp the model far above the data scale.
+    clip_logP: float = 700.0,
     clip_logit_rho: float = 50.0,
-    clip_log_alpha: float = 100.0,
+    clip_log_alpha: float = 700.0,
     B_elem_clip_factor: float = 1e6,
 ) -> float:
     """
@@ -341,9 +344,6 @@ def loglike_et_qif(
     else:
         S_path = np.zeros(Nf, dtype=float)
 
-    lnL = 0.0
-    eye3 = np.eye(3, dtype=complex)
-
     # elementwise clip for env factors (overflow guard), then safe rescaling clip
     if B_clip is not None:
         if B_clip.shape != (Nf,):
@@ -353,62 +353,67 @@ def loglike_et_qif(
         B_real = np.clip(B_real, -B_elem_clip, B_elem_clip)
         B_imag = np.clip(B_imag, -B_elem_clip, B_elem_clip)
 
-    for k in range(Nf):
-        if m_eff[k] <= 0:
-            continue
-        Sk = S_hat[k]
-        if not np.all(np.isfinite(Sk)):
-            continue
+    # ---- fully vectorized Wishart log-likelihood over bins ----
+    eye3 = np.eye(3, dtype=complex)
 
-        # instrument
-        Sigma_inst = np.diag(P[k, :]).astype(complex)
+    # environment (rank r) with per-bin rescaling clip
+    B = (B_real + 1j * B_imag).astype(complex)              # (Nf, 3, r)
+    if B_clip is not None:
+        diag_B = np.sum(np.abs(B) ** 2, axis=2)             # (Nf, 3) = diag(BB^H)
+        dmax = np.max(diag_B, axis=1)                       # (Nf,)
+        limit = np.asarray(B_clip, dtype=float)
+        scale = np.ones(Nf)
+        need = np.isfinite(dmax) & np.isfinite(limit) & (dmax > limit) & (dmax > 0.0) & (limit > 0.0)
+        scale[need] = np.sqrt(limit[need] / dmax[need])
+        B = B * scale[:, None, None]
+    Sigma_env = B @ np.conjugate(np.transpose(B, (0, 2, 1)))  # (Nf, 3, 3)
 
-        # environment (rank r)
-        Bk = (B_real[k] + 1j * B_imag[k]).astype(complex)  # (3, r)
-        if B_clip is not None:
-            diag_B = np.sum(np.abs(Bk) ** 2, axis=1)  # diag(BB^H)
-            dmax = float(np.max(diag_B))
-            limit = float(B_clip[k])
-            if np.isfinite(dmax) and np.isfinite(limit) and (dmax > limit) and (dmax > 0.0) and (limit > 0.0):
-                Bk *= np.sqrt(limit / dmax)
-        Sigma_env = Bk @ Bk.conj().T
+    # instrument
+    Sigma = Sigma_env.copy()
+    Sigma[:, 0, 0] += P[:, 0]
+    Sigma[:, 1, 1] += P[:, 1]
+    Sigma[:, 2, 2] += P[:, 2]
 
-        # QIF
-        if alpha > 0:
-            r_val = float(rho[k])
-            M = np.array([[2.0, -r_val, -r_val],
-                          [-r_val, 2.0, -r_val],
-                          [-r_val, -r_val, 2.0]], dtype=float)
-            Sigma_qif = (S_path[k] * M).astype(complex)
-        else:
-            Sigma_qif = np.zeros((3, 3), dtype=complex)
+    # QIF template M(rho): diag 2, off-diag -rho
+    if alpha > 0:
+        J_off = np.ones((3, 3)) - np.eye(3)
+        M = 2.0 * np.eye(3)[None, :, :] - rho[:, None, None] * J_off[None, :, :]
+        Sigma = Sigma + (S_path[:, None, None] * M).astype(complex)
 
-        # calibration (phase-only, gauge-fixed)
-        G = np.diag([1.0, np.exp(1j * phi_23[k, 0]), np.exp(1j * phi_23[k, 1])]).astype(complex)
+    # calibration (phase-only, gauge-fixed): Sigma -> G Sigma G^H elementwise
+    g = np.stack([np.ones(Nf, dtype=complex),
+                  np.exp(1j * phi_23[:, 0]),
+                  np.exp(1j * phi_23[:, 1])], axis=1)        # (Nf, 3)
+    Sigma = Sigma * (g[:, :, None] * np.conjugate(g[:, None, :]))
 
-        Sigma = G @ (Sigma_inst + Sigma_env + Sigma_qif) @ G.conj().T
+    # hermitize model and data
+    Sigma = 0.5 * (Sigma + np.conjugate(np.transpose(Sigma, (0, 2, 1))))
+    S_sym = 0.5 * (S_hat + np.conjugate(np.transpose(S_hat, (0, 2, 1))))
 
-        # hermitize model and data
-        Sigma = hermitize(Sigma)
-        Sk = hermitize(Sk)
+    # jitter hardening
+    max_diag = np.max(np.real(np.diagonal(Sigma, axis1=1, axis2=2)), axis=1)
+    Sigma = Sigma + (eps * max_diag + jitter_floor)[:, None, None] * eye3[None, :, :]
 
-        # jitter hardening
-        max_diag = float(np.max(np.real(np.diag(Sigma))))
-        Sigma = Sigma + (eps * max_diag + jitter_floor) * eye3
+    # bins to include: positive m_eff and finite data
+    use = (m_eff > 0) & np.all(np.isfinite(S_sym.reshape(Nf, -1)), axis=1)
+    if not np.any(use):
+        return 0.0
+    Sigma_u = Sigma[use]
+    S_u = S_sym[use]
+    m_u = m_eff[use]
 
-        # Wishart terms via Cholesky
-        try:
-            chol, lower = scipy.linalg.cho_factor(Sigma, lower=True, check_finite=False)
-        except scipy.linalg.LinAlgError:
-            return -np.inf
+    try:
+        chol = np.linalg.cholesky(Sigma_u)                  # (Nu, 3, 3)
+    except np.linalg.LinAlgError:
+        return -np.inf
 
-        logdet = 2.0 * np.sum(np.log(np.maximum(np.real(np.diag(chol)), 1e-300)))
-        Sigma_inv_S = scipy.linalg.cho_solve((chol, lower), Sk, check_finite=False)
-        tr = float(np.trace(Sigma_inv_S).real)
+    diag_chol = np.real(np.diagonal(chol, axis1=1, axis2=2))
+    logdet = 2.0 * np.sum(np.log(np.maximum(diag_chol, 1e-300)), axis=1)
+    Sigma_inv_S = np.linalg.solve(Sigma_u, S_u)
+    tr = np.real(np.trace(Sigma_inv_S, axis1=1, axis2=2))
 
-        lnL -= float(m_eff[k]) * (float(logdet) + tr)
-
-    return float(lnL)
+    lnL = -float(np.sum(m_u * (logdet + tr)))
+    return lnL
 
 
 # ---------------------------
@@ -710,6 +715,10 @@ def _compute_welch_csd_matrix(
     freqs = freqs[mask]
     S_hat = S_hat[mask]
 
+    # Native Welch bin width; must be computed BEFORE any subsampling so bin
+    # edges keep describing one Welch bin.
+    df = float(freqs[1] - freqs[0]) if len(freqs) > 1 else 1.0
+
     if max_bins is not None and len(freqs) > max_bins:
         idx = np.linspace(0, len(freqs) - 1, max_bins).round().astype(int)
         freqs = freqs[idx]
@@ -717,7 +726,6 @@ def _compute_welch_csd_matrix(
 
     m_eff_val = _effective_m(nseg)
     m_eff = np.full_like(freqs, float(m_eff_val))
-    df = float(freqs[1] - freqs[0]) if len(freqs) > 1 else 1.0
     f_min = freqs - 0.5 * df
     f_max = freqs + 0.5 * df
 
@@ -808,17 +816,64 @@ def _unpack_params(
     return alpha_val, rho_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs
 
 
-def _default_bounds(n_coeff: int, r: int, fit_alpha: bool, fit_phi: bool) -> list[tuple[float, float] | None]:
+def _default_bounds(
+    n_coeff: int,
+    r: int,
+    fit_alpha: bool,
+    fit_phi: bool,
+    P_log_center: float = 0.0,
+    alpha_log_center: float = 0.0,
+    B_scale: float = 1.0,
+) -> list[tuple[float, float] | None]:
+    """
+    Box bounds centered on the DATA scale. Strain data live at log P ~ -108;
+    fixed bounds like (-30, 30) pin every parameter at a corner and make the
+    fit data-independent (the identical-LR pathology).
+    """
     bounds: list[tuple[float, float] | None] = []
     if fit_alpha:
-        bounds.append((ALPHA_LOG_MIN, ALPHA_LOG_MAX))
+        # exp(-35) relative to the data scale is numerically "signal off",
+        # so the nested null (alpha = 0) is inside the box to high accuracy.
+        bounds.append((alpha_log_center - 35.0, alpha_log_center + 15.0))
     bounds.extend([(-10.0, 10.0)] * n_coeff)           # rho logits
-    bounds.extend([(-30.0, 30.0)] * (n_coeff * 3))     # log P
-    bounds.extend([(-1e3, 1e3)] * (n_coeff * 3 * r))    # B real
-    bounds.extend([(-1e3, 1e3)] * (n_coeff * 3 * r))    # B imag
+    bounds.extend([(P_log_center - 25.0, P_log_center + 25.0)] * (n_coeff * 3))  # log P
+    B_lim = 1e3 * max(B_scale, 1e-300)
+    bounds.extend([(-B_lim, B_lim)] * (n_coeff * 3 * r))    # B real
+    bounds.extend([(-B_lim, B_lim)] * (n_coeff * 3 * r))    # B imag
     if fit_phi:
         bounds.extend([(-np.pi, np.pi)] * (n_coeff * 2))
     return bounds
+
+
+def _data_scales(S_hat: np.ndarray, freqs: np.ndarray, gamma: float,
+                 use_planck_scale: bool, L: float, c0: float, lP: float) -> tuple[float, float, float]:
+    """
+    Return (P_log_center, alpha_log_center, B_scale) inferred from the data.
+
+    alpha is scaled so that S_path = alpha * f^-gamma matches the median PSD at
+    the band center: alpha ~ P_med * f_med^gamma.
+    """
+    diag = np.real(np.diagonal(S_hat, axis1=1, axis2=2))
+    diag = diag[np.isfinite(diag)]
+    P_scale = float(np.median(np.maximum(diag, 1e-300))) if diag.size else 1.0
+    P_log_center = float(np.log(P_scale))
+    f_med = float(np.median(freqs)) if len(freqs) else 1.0
+    alpha_log_center = P_log_center + gamma * float(np.log(max(f_med, 1e-300)))
+    if use_planck_scale:
+        pref = (c0 * lP) / (2.0 * np.pi ** 2 * L ** 2)
+        alpha_log_center -= float(np.log(max(pref, 1e-300)))
+    B_scale = float(np.sqrt(P_scale))
+    return P_log_center, alpha_log_center, B_scale
+
+
+def _clip_to_bounds(x: np.ndarray, bounds: list[tuple[float, float] | None]) -> np.ndarray:
+    out = x.copy()
+    for i, b in enumerate(bounds):
+        if b is None:
+            continue
+        lo, hi = b
+        out[i] = min(max(out[i], lo), hi)
+    return out
 
 
 def fit_model(
@@ -845,23 +900,36 @@ def fit_model(
     n_starts: int = 3,
     seed: int | None = None,
     init_params: dict | None = None,
-    alpha_init: float | None = None,
 ) -> tuple[dict, float]:
     rho_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs = _build_initial_coeffs(S_hat, n_coeff, r)
     if init_params is not None:
-        rho_coeffs = init_params.get("rho_coeffs", rho_coeffs)
-        P_coeffs = init_params.get("P_coeffs", P_coeffs)
-        B_real_coeffs = init_params.get("B_real_coeffs", B_real_coeffs)
-        B_imag_coeffs = init_params.get("B_imag_coeffs", B_imag_coeffs)
-        phi_coeffs = init_params.get("phi_coeffs", phi_coeffs)
+        # Warm start (e.g. the alternative fit from the null optimum). With the
+        # signal initialized "off", the H1 optimizer starts at the H0 optimum and
+        # can only improve, so the nested LR is >= 0 up to optimizer tolerance.
+        rho_coeffs = np.asarray(init_params["rho_coeffs"], dtype=float).copy()
+        P_coeffs = np.asarray(init_params["P_coeffs"], dtype=float).copy()
+        B_real_coeffs = np.asarray(init_params["B_real_coeffs"], dtype=float).copy()
+        B_imag_coeffs = np.asarray(init_params["B_imag_coeffs"], dtype=float).copy()
+        phi_coeffs = np.asarray(init_params["phi_coeffs"], dtype=float).copy()
 
-    alpha_val = float(np.log(1.0))
-    if alpha_init is not None:
-        alpha_val = float(alpha_init)
-    if fit_alpha:
-        alpha_val = float(np.clip(alpha_val, ALPHA_LOG_MIN, ALPHA_LOG_MAX))
+    P_log_center, alpha_log_center, B_scale = _data_scales(
+        S_hat, freqs, gamma, use_planck_scale, L, c0, lP
+    )
+    alpha_lo = alpha_log_center - 35.0
+    alpha_val = alpha_lo if fit_alpha else float("-inf")
+    if (
+        init_params is not None
+        and fit_alpha
+        and np.isfinite(init_params.get("alpha_val", float("-inf")))
+    ):
+        alpha_val = float(np.clip(init_params["alpha_val"], alpha_lo, alpha_log_center + 15.0))
 
-    bounds = _default_bounds(n_coeff, r, fit_alpha, fit_phi)
+    bounds = _default_bounds(
+        n_coeff, r, fit_alpha, fit_phi,
+        P_log_center=P_log_center,
+        alpha_log_center=alpha_log_center,
+        B_scale=B_scale,
+    )
 
     def objective(x: np.ndarray) -> float:
         alpha_val_i, rho_c, P_c, B_r, B_i, phi_c = _unpack_params(x, n_coeff, r, fit_alpha, fit_phi)
@@ -890,21 +958,47 @@ def fit_model(
         )
         return -float(lnL)
 
+    # When fitting alpha, seed the signal start with a coarse 1-D profile scan
+    # over log-alpha (nuisance parameters held at the warm-start values). In
+    # log-parameterization the numerical gradient w.r.t. alpha_val vanishes at
+    # alpha ~ 0, and a start at the raw data scale can overshoot the basin, so
+    # a gradient-free scan is the only reliable way to locate the alpha basin.
+    alpha_seed = alpha_log_center
+    if fit_alpha:
+        scan = np.linspace(alpha_lo, alpha_log_center + 10.0, 46)
+        best_scan_val = -np.inf
+        for a_try in scan:
+            x_try = _pack_params(float(a_try), rho_coeffs, P_coeffs, B_real_coeffs,
+                                 B_imag_coeffs, phi_coeffs, fit_alpha, fit_phi)
+            v = -objective(_clip_to_bounds(x_try, bounds))
+            if v > best_scan_val:
+                best_scan_val = v
+                alpha_seed = float(a_try)
+
     rng = np.random.default_rng(seed)
     best_res = None
     best_fun = np.inf
-    for start in range(max(1, n_starts)):
+    # Two deterministic starts are always used when fitting alpha: signal off
+    # (nested-null warm start, guarantees LR >= 0) and the profile-scan seed.
+    n_total = max(1, n_starts, 2 if fit_alpha else 1)
+    for start in range(n_total):
         if start == 0:
             x0 = _pack_params(alpha_val, rho_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs, fit_alpha, fit_phi)
+        elif start == 1 and fit_alpha:
+            x0 = _pack_params(alpha_seed, rho_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs, fit_alpha, fit_phi)
         else:
+            # Jitter relative to each parameter's physical scale; absolute
+            # jitters (e.g. 1e-3 on B ~ 1e-24) would swamp the initial point.
             rho_j = rho_coeffs + rng.normal(scale=0.1, size=rho_coeffs.shape)
             P_j = P_coeffs + rng.normal(scale=0.5, size=P_coeffs.shape)
-            B_rj = B_real_coeffs + rng.normal(scale=1e-3, size=B_real_coeffs.shape)
-            B_ij = B_imag_coeffs + rng.normal(scale=1e-3, size=B_imag_coeffs.shape)
+            B_jit = 0.1 * max(float(np.max(np.abs(B_real_coeffs))), float(np.max(np.abs(B_imag_coeffs))), 1e-3 * B_scale)
+            B_rj = B_real_coeffs + rng.normal(scale=B_jit, size=B_real_coeffs.shape)
+            B_ij = B_imag_coeffs + rng.normal(scale=B_jit, size=B_imag_coeffs.shape)
             phi_j = phi_coeffs + rng.normal(scale=0.1, size=phi_coeffs.shape)
-            alpha_j = alpha_val + float(rng.normal(scale=1.0)) if fit_alpha else float("-inf")
+            alpha_j = alpha_val + float(rng.normal(scale=2.0)) if fit_alpha else float("-inf")
             x0 = _pack_params(alpha_j, rho_j, P_j, B_rj, B_ij, phi_j, fit_alpha, fit_phi)
 
+        x0 = _clip_to_bounds(x0, bounds)
         res = minimize(objective, x0, method="L-BFGS-B", bounds=bounds, options={"maxiter": max_iter})
         if res.fun < best_fun:
             best_fun = float(res.fun)
@@ -925,6 +1019,68 @@ def fit_model(
     return params, lnL
 
 
+def fit_nested_pair(
+    S_hat: np.ndarray,
+    m_eff: np.ndarray,
+    freqs: np.ndarray,
+    f_min: np.ndarray,
+    f_max: np.ndarray,
+    knots: np.ndarray,
+    P_floor: np.ndarray,
+    B_clip: np.ndarray,
+    n_coeff: int,
+    r: int,
+    L: float,
+    c0: float,
+    lP: float,
+    T_over_f2_avg: np.ndarray,
+    T_over_fgamma_avg: np.ndarray | None = None,
+    gamma: float = 2.0,
+    use_planck_scale: bool = False,
+    fit_phi: bool = True,
+    max_iter: int = 500,
+    n_starts: int = 2,
+    seed: int | None = None,
+) -> tuple[dict, float, dict, float]:
+    """
+    Fit the nested pair (H_env, H_env+signal) with symmetric optimization effort.
+
+    The null is refit warm-started from the alternative's nuisance parameters
+    (signal stripped); otherwise the extra starts used for the alternative can
+    find a better optimum of the SHARED nuisance model and inflate the LR.
+    Returns (env_params, lnL_env, qif_params, lnL_qif).
+    """
+    common = dict(
+        L=L, c0=c0, lP=lP, T_over_f2_avg=T_over_f2_avg,
+        T_over_fgamma_avg=T_over_fgamma_avg, gamma=gamma,
+        use_planck_scale=use_planck_scale, fit_phi=fit_phi,
+        max_iter=max_iter, n_starts=n_starts,
+    )
+    env_params, lnL_env = fit_model(
+        S_hat, m_eff, freqs, f_min, f_max, knots, P_floor, B_clip, n_coeff, r,
+        fit_alpha=False, seed=seed, **common,
+    )
+    qif_params, lnL_qif = fit_model(
+        S_hat, m_eff, freqs, f_min, f_max, knots, P_floor, B_clip, n_coeff, r,
+        fit_alpha=True, seed=seed, init_params=env_params, **common,
+    )
+    # cross-pollination: give the null the alternative's nuisance solution
+    env_params_x, lnL_env_x = fit_model(
+        S_hat, m_eff, freqs, f_min, f_max, knots, P_floor, B_clip, n_coeff, r,
+        fit_alpha=False, seed=seed, init_params=qif_params, **common,
+    )
+    if lnL_env_x > lnL_env:
+        env_params, lnL_env = env_params_x, lnL_env_x
+        # and let the alternative benefit from the improved null in turn
+        qif_params_x, lnL_qif_x = fit_model(
+            S_hat, m_eff, freqs, f_min, f_max, knots, P_floor, B_clip, n_coeff, r,
+            fit_alpha=True, seed=seed, init_params=env_params, **common,
+        )
+        if lnL_qif_x > lnL_qif:
+            qif_params, lnL_qif = qif_params_x, lnL_qif_x
+    return env_params, lnL_env, qif_params, lnL_qif
+
+
 def _build_sigma_stack(
     params: dict,
     freqs: np.ndarray,
@@ -942,7 +1098,7 @@ def _build_sigma_stack(
     T_over_fgamma_avg: np.ndarray | None = None,
 ) -> np.ndarray:
     P_log = evaluate_spline(params["P_coeffs"], knots, freqs)
-    P = np.exp(np.clip(P_log, -50.0, 50.0))
+    P = np.exp(np.clip(P_log, -700.0, 700.0))
     P = np.maximum(P, P_floor)
 
     rho_logit = evaluate_spline(params["rho_coeffs"], knots, freqs).reshape(-1)
@@ -957,7 +1113,7 @@ def _build_sigma_stack(
     if np.isneginf(params["alpha_val"]):
         alpha = 0.0
     else:
-        alpha = float(np.exp(np.clip(params["alpha_val"], -100.0, 100.0)))
+        alpha = float(np.exp(np.clip(params["alpha_val"], -700.0, 700.0)))
 
     if alpha > 0:
         S_path = qif_path_psd_binavg(
@@ -1030,18 +1186,11 @@ def bootstrap_lr(
 ) -> tuple[float, float, np.ndarray]:
     rng = np.random.default_rng(seed)
 
-    env_params, lnL_env = fit_model(
+    env_params, lnL_env, qif_params, lnL_qif = fit_nested_pair(
         S_hat, m_eff, freqs, f_min, f_max, knots, P_floor, B_clip, n_coeff, r,
         L=L, c0=c0, lP=lP, T_over_f2_avg=T_over_f2_avg, T_over_fgamma_avg=T_over_fgamma_avg, gamma=gamma,
         use_planck_scale=use_planck_scale,
-        fit_alpha=False, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=seed
-    )
-    qif_params, lnL_qif = fit_model(
-        S_hat, m_eff, freqs, f_min, f_max, knots, P_floor, B_clip, n_coeff, r,
-        L=L, c0=c0, lP=lP, T_over_f2_avg=T_over_f2_avg, T_over_fgamma_avg=T_over_fgamma_avg, gamma=gamma,
-        use_planck_scale=use_planck_scale,
-        fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=seed,
-        init_params=env_params, alpha_init=ALPHA_LOG_MIN
+        fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=seed,
     )
     lr_obs = 2.0 * (lnL_qif - lnL_env)
 
@@ -1079,18 +1228,11 @@ def bootstrap_lr(
             S_hat_b[k] = sample_covariance_from_sigma(Sigma_env[k], m_star, rng)
 
         if refit:
-            env_b, lnL_env_b = fit_model(
+            env_b, lnL_env_b, qif_b, lnL_qif_b = fit_nested_pair(
                 S_hat_b, m_eff, freqs, f_min, f_max, knots, P_floor, B_clip, n_coeff, r,
                 L=L, c0=c0, lP=lP, T_over_f2_avg=T_over_f2_avg, T_over_fgamma_avg=T_over_fgamma_avg, gamma=gamma,
                 use_planck_scale=use_planck_scale,
-                fit_alpha=False, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=seed + i + 1
-            )
-            qif_b, lnL_qif_b = fit_model(
-                S_hat_b, m_eff, freqs, f_min, f_max, knots, P_floor, B_clip, n_coeff, r,
-                L=L, c0=c0, lP=lP, T_over_f2_avg=T_over_f2_avg, T_over_fgamma_avg=T_over_fgamma_avg, gamma=gamma,
-                use_planck_scale=use_planck_scale,
-                fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=seed + i + 1,
-                init_params=env_b, alpha_init=ALPHA_LOG_MIN
+                fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=seed + i + 1,
             )
         else:
             lnL_env_b = loglike_et_qif(
@@ -1234,8 +1376,11 @@ def _run_loglike_on_group(
     }
 
     if not fit:
+        # Evaluate the NULL model (alpha = 0) at the initial coefficients; using
+        # alpha = 1 here poisons Sigma with a signal ~40 orders above the data
+        # and makes the result data-independent.
         lnL = loglike_et_qif(
-            np.log(1.0),
+            float("-inf"),
             rho_coeffs,
             P_coeffs,
             B_real_coeffs,
@@ -1260,7 +1405,7 @@ def _run_loglike_on_group(
         results["loglike"] = float(lnL)
         return results
 
-    env_params, lnL_env = fit_model(
+    env_params, lnL_env, qif_params, lnL_qif = fit_nested_pair(
         S_hat, m_eff, freqs, f_min, f_max, knots, P_floor, B_clip, n_coeff, r,
         L=L,
         c0=c0,
@@ -1269,27 +1414,17 @@ def _run_loglike_on_group(
         T_over_f2_avg=T_over_f2_avg,
         T_over_fgamma_avg=T_over_fgamma_avg,
         gamma=gamma,
-        fit_alpha=False, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=group["gps"]
-    )
-    qif_params, lnL_qif = fit_model(
-        S_hat, m_eff, freqs, f_min, f_max, knots, P_floor, B_clip, n_coeff, r,
-        L=L,
-        c0=c0,
-        lP=lP,
-        use_planck_scale=use_planck_scale,
-        T_over_f2_avg=T_over_f2_avg,
-        T_over_fgamma_avg=T_over_fgamma_avg,
-        gamma=gamma,
-        fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=group["gps"],
-        init_params=env_params, alpha_init=ALPHA_LOG_MIN
+        fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=group["gps"],
     )
     lr = 2.0 * (lnL_qif - lnL_env)
+    A_h_hat = float(np.exp(qif_params["alpha_val"])) if np.isfinite(qif_params["alpha_val"]) else 0.0
     results["baseline"] = {
         "r": r,
         "fit_phi": fit_phi,
         "lnL_env": float(lnL_env),
         "lnL_qif": float(lnL_qif),
         "lr": float(lr),
+        "A_h_hat": A_h_hat,
     }
 
     if bootstrap_n > 0:
@@ -1324,7 +1459,7 @@ def _run_loglike_on_group(
         results["baseline"]["p_se"] = float(np.sqrt(pval * (1.0 - pval) / max(1, bootstrap_n)))
 
     if stress_rank2:
-        env_params2, lnL_env2 = fit_model(
+        env_params2, lnL_env2, qif_params2, lnL_qif2 = fit_nested_pair(
             S_hat, m_eff, freqs, f_min, f_max, knots, P_floor, B_clip, n_coeff, 2,
             L=L,
             c0=c0,
@@ -1333,19 +1468,7 @@ def _run_loglike_on_group(
             T_over_f2_avg=T_over_f2_avg,
             T_over_fgamma_avg=T_over_fgamma_avg,
             gamma=gamma,
-            fit_alpha=False, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=group["gps"] + 2
-        )
-        qif_params2, lnL_qif2 = fit_model(
-            S_hat, m_eff, freqs, f_min, f_max, knots, P_floor, B_clip, n_coeff, 2,
-            L=L,
-            c0=c0,
-            lP=lP,
-            use_planck_scale=use_planck_scale,
-            T_over_f2_avg=T_over_f2_avg,
-            T_over_fgamma_avg=T_over_fgamma_avg,
-            gamma=gamma,
-            fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=group["gps"] + 2,
-            init_params=env_params2, alpha_init=ALPHA_LOG_MIN
+            fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=group["gps"] + 2,
         )
         lr2 = 2.0 * (lnL_qif2 - lnL_env2)
         results["stress_rank2"] = {
@@ -1357,7 +1480,7 @@ def _run_loglike_on_group(
         }
 
     if calib_variants:
-        env_params0, lnL_env0 = fit_model(
+        env_params0, lnL_env0, qif_params0, lnL_qif0 = fit_nested_pair(
             S_hat, m_eff, freqs, f_min, f_max, knots, P_floor, B_clip, n_coeff, r,
             L=L,
             c0=c0,
@@ -1366,19 +1489,7 @@ def _run_loglike_on_group(
             T_over_f2_avg=T_over_f2_avg,
             T_over_fgamma_avg=T_over_fgamma_avg,
             gamma=gamma,
-            fit_alpha=False, fit_phi=False, max_iter=max_iter, n_starts=n_starts, seed=group["gps"] + 3
-        )
-        qif_params0, lnL_qif0 = fit_model(
-            S_hat, m_eff, freqs, f_min, f_max, knots, P_floor, B_clip, n_coeff, r,
-            L=L,
-            c0=c0,
-            lP=lP,
-            use_planck_scale=use_planck_scale,
-            T_over_f2_avg=T_over_f2_avg,
-            T_over_fgamma_avg=T_over_fgamma_avg,
-            gamma=gamma,
-            fit_alpha=True, fit_phi=False, max_iter=max_iter, n_starts=n_starts, seed=group["gps"] + 3,
-            init_params=env_params0, alpha_init=ALPHA_LOG_MIN
+            fit_phi=False, max_iter=max_iter, n_starts=n_starts, seed=group["gps"] + 3,
         )
         lr0 = 2.0 * (lnL_qif0 - lnL_env0)
         results["calib_phi_fixed"] = {
@@ -1397,7 +1508,7 @@ def run_on_sample_data(
     max_seconds: float = 256.0,
     nperseg_seconds: float = 4.0,
     overlap: float = 0.5,
-    n_coeff: int = 6,
+    n_coeff: int = 20,
     r: int = 1,
     fmin_hz: float = 10.0,
     fmax_hz: float | None = None,
@@ -1456,7 +1567,7 @@ def run_on_sample_data(
             print(f"{label} gps={group['gps']} loglike_et_qif={results['loglike']:.6e}")
             continue
         base = results["baseline"]
-        line = f"{label} gps={group['gps']} bins={results['freq_bins']} r={base['r']} lr={base['lr']:.6e}"
+        line = f"{label} gps={group['gps']} bins={results['freq_bins']} r={base['r']} lr={base['lr']:.6e} A_h_hat={base.get('A_h_hat', float('nan')):.3e}"
         if "p_value" in base:
             line += f" p={base['p_value']:.4f}±{base['p_se']:.4f}"
         print(line)
@@ -1500,14 +1611,14 @@ def main() -> None:
     parser.add_argument("--max-seconds", type=float, default=256.0, help="Seconds to read from each GWF.")
     parser.add_argument("--nperseg-seconds", type=float, default=4.0, help="Welch segment length in seconds.")
     parser.add_argument("--overlap", type=float, default=0.5, help="Welch overlap fraction (0-1).")
-    parser.add_argument("--n-coeff", type=int, default=6, help="Number of spline coefficients.")
+    parser.add_argument("--n-coeff", type=int, default=20, help="Number of spline coefficients (must be rich enough to represent the PSD shape; too few coefficients lets the f^-gamma term absorb spline misfit).")
     parser.add_argument("--r", type=int, default=1, help="Environmental rank r.")
     parser.add_argument("--fmin", type=float, default=10.0, help="Minimum frequency (Hz).")
     parser.add_argument("--fmax", type=float, default=None, help="Maximum frequency (Hz).")
     parser.add_argument("--max-bins", type=int, default=None, help="Optional max frequency bins (downsample).")
     parser.add_argument("--fit", action="store_true", help="Fit spline coefficients (optimize log-likelihood).")
     parser.add_argument("--fit-phi", action="store_true", help="Fit calibration phase coefficients.")
-    parser.add_argument("--max-iter", type=int, default=200, help="Max optimizer iterations.")
+    parser.add_argument("--max-iter", type=int, default=500, help="Max optimizer iterations.")
     parser.add_argument("--bootstrap", type=int, default=0, help="Bootstrap replicates for p-value.")
     parser.add_argument("--bootstrap-refit", action="store_true", help="Refit models inside bootstrap.")
     parser.add_argument("--stress-rank2", action="store_true", help="Run rank-2 environmental stress test.")

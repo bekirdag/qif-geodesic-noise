@@ -65,9 +65,13 @@ We compare two nested models:
 
 After fitting both models, we compute the likelihood ratio:
 
-LR = log L(H_sig) - log L(H_env)
+LR = 2 * [log L(H_sig) - log L(H_env)]
 
-A negative LR indicates the signal term does not improve the fit under current settings.
+Because H_env is nested in H_sig, LR >= 0 for correctly maximized fits. A materially
+negative LR is always an optimizer failure and must be treated as a pipeline bug,
+never reported as a null result. The implementation guarantees LR >= 0 by warm-starting
+the H_sig fit at the H_env optimum and cross-pollinating the null refit
+(`fit_nested_pair`).
 
 ## 7) Optimization and fitting
 

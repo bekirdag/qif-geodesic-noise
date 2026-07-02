@@ -1,0 +1,6 @@
+Fisher I(A_h) at 128 s (rho=0.5, 10 Hz - Nyq, 4 s segments): 1.192491e+96
+UL95_Ah_128s: 1.501815e-48
+UL95_Ah_2048s: 3.754536e-49
+UL95_Ah_1day: 5.780487e-50
+UL95_Ah_1yr: 3.027374e-51
+null_stream_amp_suppression: 1.741794e+00

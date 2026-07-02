@@ -12,7 +12,9 @@ from qif_v2 import (
     ALPHA_LOG_MAX,
     ALPHA_LOG_MIN,
     _build_initial_coeffs,
+    _clip_to_bounds,
     _compute_welch_csd_matrix,
+    _data_scales,
     _default_bounds,
     _find_gwf_groups,
     _load_line_mask,
@@ -325,9 +327,11 @@ def loglike_et_qif_cuda(
     T_eff_sq=None,
     eps: float = 1e-9,
     jitter_floor: float = 1e-50,
-    clip_logP: float = 50.0,
+    # Overflow guards only (exp overflows near 709); tight clips would clamp the
+    # model far above the physical strain scale (log P ~ -108).
+    clip_logP: float = 700.0,
     clip_logit_rho: float = 50.0,
-    clip_log_alpha: float = 100.0,
+    clip_log_alpha: float = 700.0,
     B_elem_clip_factor: float = 1e6,
     backend: Backend | None = None,
 ) -> float:
@@ -473,7 +477,7 @@ def _build_sigma_stack_cuda(
     freqs_cpu = data.freqs
 
     P_log_cpu = evaluate_spline_cpu(params["P_coeffs"], data.knots, freqs_cpu)
-    P = xp.exp(xp.clip(backend.asarray(P_log_cpu), -50.0, 50.0))
+    P = xp.exp(xp.clip(backend.asarray(P_log_cpu), -700.0, 700.0))
     if data.P_floor_x is not None:
         P = xp.maximum(P, data.P_floor_x)
 
@@ -492,7 +496,7 @@ def _build_sigma_stack_cuda(
     if np.isneginf(params["alpha_val"]):
         alpha = 0.0
     else:
-        alpha = float(np.exp(np.clip(params["alpha_val"], -100.0, 100.0)))
+        alpha = float(np.exp(np.clip(params["alpha_val"], -700.0, 700.0)))
 
     if alpha > 0:
         S_path = qif_path_psd_binavg_xp(
@@ -585,26 +589,37 @@ def fit_model_cuda(
     seed: int | None,
     backend: Backend,
     init_params: dict | None = None,
-    alpha_init: float | None = None,
 ) -> tuple[dict, float]:
     rho_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs = _build_initial_coeffs(
         data.S_hat_cpu, n_coeff, r
     )
     if init_params is not None:
-        rho_coeffs = init_params.get("rho_coeffs", rho_coeffs)
-        P_coeffs = init_params.get("P_coeffs", P_coeffs)
-        B_real_coeffs = init_params.get("B_real_coeffs", B_real_coeffs)
-        B_imag_coeffs = init_params.get("B_imag_coeffs", B_imag_coeffs)
-        phi_coeffs = init_params.get("phi_coeffs", phi_coeffs)
+        rho_coeffs = np.asarray(init_params["rho_coeffs"], dtype=float).copy()
+        P_coeffs = np.asarray(init_params["P_coeffs"], dtype=float).copy()
+        B_real_coeffs = np.asarray(init_params["B_real_coeffs"], dtype=float).copy()
+        B_imag_coeffs = np.asarray(init_params["B_imag_coeffs"], dtype=float).copy()
+        phi_coeffs = np.asarray(init_params["phi_coeffs"], dtype=float).copy()
 
-    alpha_val = float(np.log(1.0))
-    if alpha_init is not None:
-        alpha_val = float(alpha_init)
-    if fit_alpha:
-        alpha_val = float(np.clip(alpha_val, ALPHA_LOG_MIN, ALPHA_LOG_MAX))
+    P_log_center, alpha_log_center, B_scale = _data_scales(
+        data.S_hat_cpu, data.freqs, gamma, use_planck_scale, L, c0, lP
+    )
+    alpha_lo = alpha_log_center - 35.0
+    alpha_val = alpha_lo if fit_alpha else float("-inf")
+    if (
+        init_params is not None
+        and fit_alpha
+        and np.isfinite(init_params.get("alpha_val", float("-inf")))
+    ):
+        alpha_val = float(np.clip(init_params["alpha_val"], alpha_lo, alpha_log_center + 15.0))
 
-    bounds = _default_bounds(n_coeff, r, fit_alpha, fit_phi)
+    bounds = _default_bounds(
+        n_coeff, r, fit_alpha, fit_phi,
+        P_log_center=P_log_center,
+        alpha_log_center=alpha_log_center,
+        B_scale=B_scale,
+    )
     x0 = _pack_params(alpha_val, rho_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs, fit_alpha, fit_phi)
+    x0 = _clip_to_bounds(x0, bounds)
 
     def objective(x: np.ndarray) -> float:
         alpha_val_i, rho_c, P_c, B_r, B_i, phi_c = _unpack_params(x, n_coeff, r, fit_alpha, fit_phi)
@@ -625,15 +640,48 @@ def fit_model_cuda(
         )
         return -float(lnL)
 
+    # Coarse 1-D profile scan over log-alpha (nuisance fixed at warm start) to
+    # seed the signal start; the log-space alpha gradient vanishes at alpha ~ 0
+    # and a raw data-scale start can overshoot the basin.
+    alpha_seed = alpha_log_center
+    if fit_alpha:
+        scan = np.linspace(alpha_lo, alpha_log_center + 10.0, 46)
+        best_scan_val = -np.inf
+        for a_try in scan:
+            x_try = _pack_params(float(a_try), rho_coeffs, P_coeffs, B_real_coeffs,
+                                 B_imag_coeffs, phi_coeffs, fit_alpha, fit_phi)
+            v = -objective(_clip_to_bounds(x_try, bounds))
+            if v > best_scan_val:
+                best_scan_val = v
+                alpha_seed = float(a_try)
+
     rng = np.random.default_rng(seed)
     best_res = None
     best_fun = np.inf
-    for start in range(max(1, n_starts)):
+    # Two deterministic starts when fitting alpha: signal off (nested warm
+    # start, guarantees LR >= 0) and the profile-scan seed.
+    n_total = max(1, n_starts, 2 if fit_alpha else 1)
+    for start in range(n_total):
         if start == 0:
             x_start = x0
+        elif start == 1 and fit_alpha:
+            x_start = _pack_params(alpha_seed, rho_coeffs, P_coeffs, B_real_coeffs,
+                                   B_imag_coeffs, phi_coeffs, fit_alpha, fit_phi)
+            x_start = _clip_to_bounds(x_start, bounds)
         else:
-            jitter = rng.normal(scale=0.1, size=x0.shape)
-            x_start = x0 + jitter
+            # Scale-aware jitter (absolute 0.1 jitter on B ~ 1e-24 would swamp it).
+            B_jit = 0.1 * max(float(np.max(np.abs(B_real_coeffs))), float(np.max(np.abs(B_imag_coeffs))), 1e-3 * B_scale)
+            alpha_j = alpha_val + float(rng.normal(scale=2.0)) if fit_alpha else float("-inf")
+            x_start = _pack_params(
+                alpha_j,
+                rho_coeffs + rng.normal(scale=0.1, size=rho_coeffs.shape),
+                P_coeffs + rng.normal(scale=0.5, size=P_coeffs.shape),
+                B_real_coeffs + rng.normal(scale=B_jit, size=B_real_coeffs.shape),
+                B_imag_coeffs + rng.normal(scale=B_jit, size=B_imag_coeffs.shape),
+                phi_coeffs + rng.normal(scale=0.1, size=phi_coeffs.shape),
+                fit_alpha, fit_phi,
+            )
+            x_start = _clip_to_bounds(x_start, bounds)
         res = minimize(objective, x_start, method="L-BFGS-B", bounds=bounds, options={"maxiter": max_iter})
         if res.fun < best_fun:
             best_fun = float(res.fun)
@@ -683,7 +731,7 @@ def bootstrap_lr_cuda(
     qif_params, lnL_qif = fit_model_cuda(
         data, n_coeff, r, L, c0, lP, gamma, use_planck_scale,
         fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=seed, backend=backend,
-        init_params=env_params, alpha_init=ALPHA_LOG_MIN
+        init_params=env_params,
     )
     lr_obs = 2.0 * (lnL_qif - lnL_env)
 
@@ -716,7 +764,7 @@ def bootstrap_lr_cuda(
             qif_b, lnL_qif_b = fit_model_cuda(
                 data_b, n_coeff, r, L, c0, lP, gamma, use_planck_scale,
                 fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=seed + i + 1,
-                backend=backend, init_params=env_b, alpha_init=ALPHA_LOG_MIN
+                backend=backend, init_params=env_b
             )
         else:
             data_b = replace(data, S_hat_x=S_hat_b)
@@ -886,8 +934,11 @@ def _run_loglike_on_group_cuda(
     }
 
     if not fit:
+        # Evaluate the NULL model (alpha = 0); alpha = 1 in absolute units is
+        # ~40 orders of magnitude above the data and makes the result
+        # data-independent.
         lnL = loglike_et_qif_cuda(
-            np.log(1.0),
+            float("-inf"),
             rho_coeffs,
             P_coeffs,
             B_real_coeffs,
@@ -911,15 +962,17 @@ def _run_loglike_on_group_cuda(
     qif_params, lnL_qif = fit_model_cuda(
         data_obj, n_coeff, r, L, c0, lP, gamma, use_planck_scale,
         fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=group["gps"], backend=backend,
-        init_params=env_params, alpha_init=ALPHA_LOG_MIN
+        init_params=env_params,
     )
     lr = 2.0 * (lnL_qif - lnL_env)
+    A_h_hat = float(np.exp(qif_params["alpha_val"])) if np.isfinite(qif_params["alpha_val"]) else 0.0
     results["baseline"] = {
         "r": r,
         "fit_phi": fit_phi,
         "lnL_env": float(lnL_env),
         "lnL_qif": float(lnL_qif),
         "lr": float(lr),
+        "A_h_hat": A_h_hat,
     }
 
     if bootstrap_n > 0:
@@ -954,7 +1007,7 @@ def _run_loglike_on_group_cuda(
         qif_params2, lnL_qif2 = fit_model_cuda(
             data_obj, n_coeff, 2, L, c0, lP, gamma, use_planck_scale,
             fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=group["gps"] + 2,
-            backend=backend, init_params=env_params2, alpha_init=ALPHA_LOG_MIN
+            backend=backend, init_params=env_params2
         )
         lr2 = 2.0 * (lnL_qif2 - lnL_env2)
         results["stress_rank2"] = {
@@ -974,7 +1027,7 @@ def _run_loglike_on_group_cuda(
         qif_params0, lnL_qif0 = fit_model_cuda(
             data_obj, n_coeff, r, L, c0, lP, gamma, use_planck_scale,
             fit_alpha=True, fit_phi=False, max_iter=max_iter, n_starts=n_starts, seed=group["gps"] + 3,
-            backend=backend, init_params=env_params0, alpha_init=ALPHA_LOG_MIN
+            backend=backend, init_params=env_params0
         )
         lr0 = 2.0 * (lnL_qif0 - lnL_env0)
         results["calib_phi_fixed"] = {
@@ -993,7 +1046,7 @@ def run_on_sample_data_cuda(
     max_seconds: float = 256.0,
     nperseg_seconds: float = 4.0,
     overlap: float = 0.5,
-    n_coeff: int = 6,
+    n_coeff: int = 20,
     r: int = 1,
     fmin_hz: float = 10.0,
     fmax_hz: float | None = None,
@@ -1195,14 +1248,14 @@ def main() -> None:
     parser.add_argument("--max-seconds", type=float, default=256.0, help="Seconds to read from each GWF.")
     parser.add_argument("--nperseg-seconds", type=float, default=4.0, help="Welch segment length in seconds.")
     parser.add_argument("--overlap", type=float, default=0.5, help="Welch overlap fraction (0-1).")
-    parser.add_argument("--n-coeff", type=int, default=6, help="Number of spline coefficients.")
+    parser.add_argument("--n-coeff", type=int, default=20, help="Number of spline coefficients (must be rich enough to represent the PSD shape; too few coefficients lets the f^-gamma term absorb spline misfit).")
     parser.add_argument("--r", type=int, default=1, help="Environmental rank r.")
     parser.add_argument("--fmin", type=float, default=10.0, help="Minimum frequency (Hz).")
     parser.add_argument("--fmax", type=float, default=None, help="Maximum frequency (Hz).")
     parser.add_argument("--max-bins", type=int, default=None, help="Optional max frequency bins (downsample).")
     parser.add_argument("--fit", action="store_true", help="Fit spline coefficients (optimize log-likelihood).")
     parser.add_argument("--fit-phi", action="store_true", help="Fit calibration phase coefficients.")
-    parser.add_argument("--max-iter", type=int, default=200, help="Max optimizer iterations.")
+    parser.add_argument("--max-iter", type=int, default=500, help="Max optimizer iterations.")
     parser.add_argument("--bootstrap", type=int, default=0, help="Bootstrap replicates for p-value.")
     parser.add_argument("--bootstrap-refit", action="store_true", help="Refit models inside bootstrap.")
     parser.add_argument("--stress-rank2", action="store_true", help="Run rank-2 environmental stress test.")

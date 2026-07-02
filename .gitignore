@@ -20,6 +20,7 @@ venv/
 # Local data and outputs
 data/
 figures/
+!docs/figures/
 test-runs/20*-*/
 test-runs/*.csv
 repo_meta.json
