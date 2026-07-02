@@ -21,6 +21,7 @@ from qif_v2 import (
     _load_transfer_csv,
     _make_synthetic_data,
     _open_uniform_knots,
+    _open_log_knots,
     _pack_params,
     _read_gwf_triplet,
     _transfer_sq_func,
@@ -591,7 +592,7 @@ def fit_model_cuda(
     init_params: dict | None = None,
 ) -> tuple[dict, float]:
     rho_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs = _build_initial_coeffs(
-        data.S_hat_cpu, n_coeff, r
+        data.S_hat_cpu, n_coeff, r, freqs=data.freqs, knots=data.knots
     )
     if init_params is not None:
         rho_coeffs = np.asarray(init_params["rho_coeffs"], dtype=float).copy()
@@ -618,6 +619,22 @@ def fit_model_cuda(
         alpha_log_center=alpha_log_center,
         B_scale=B_scale,
     )
+
+    # Per-parameter finite-difference steps: scipy's absolute default eps
+    # (~1.5e-8) applied to B coefficients of scale ~1e-24 yields garbage
+    # gradients and nit=0 ABNORMAL exits (see qif_v2.fit_model).
+    eps_parts: list[np.ndarray] = []
+    if fit_alpha:
+        eps_parts.append(np.full(1, 1e-4))
+    eps_parts.append(np.full(n_coeff, 1e-4))
+    eps_parts.append(np.full(n_coeff * 3, 1e-4))
+    eps_B = 1e-4 * max(B_scale, 1e-300)
+    eps_parts.append(np.full(n_coeff * 3 * r, eps_B))
+    eps_parts.append(np.full(n_coeff * 3 * r, eps_B))
+    if fit_phi:
+        eps_parts.append(np.full(n_coeff * 2, 1e-4))
+    eps_vec = np.concatenate(eps_parts)
+
     x0 = _pack_params(alpha_val, rho_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs, fit_alpha, fit_phi)
     x0 = _clip_to_bounds(x0, bounds)
 
@@ -682,7 +699,9 @@ def fit_model_cuda(
                 fit_alpha, fit_phi,
             )
             x_start = _clip_to_bounds(x_start, bounds)
-        res = minimize(objective, x_start, method="L-BFGS-B", bounds=bounds, options={"maxiter": max_iter})
+        res = minimize(objective, x_start, method="L-BFGS-B", bounds=bounds,
+                       options={"maxiter": max_iter, "eps": eps_vec,
+                                "maxfun": max(15000, 2 * max_iter * (len(x_start) + 1))})
         if res.fun < best_fun:
             best_fun = float(res.fun)
             best_res = res
@@ -875,8 +894,9 @@ def _run_loglike_on_group_cuda(
     if len(freqs) < n_coeff:
         raise ValueError("Not enough frequency bins for the requested spline coefficients.")
 
-    knots = _open_uniform_knots(freqs[0], freqs[-1], n_coeff, k=3)
-    rho_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs = _build_initial_coeffs(S_hat, n_coeff, r)
+    knots = _open_log_knots(freqs[0], freqs[-1], n_coeff, k=3)
+    rho_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs = _build_initial_coeffs(
+        S_hat, n_coeff, r, freqs=freqs, knots=knots)
 
     valid = np.all(np.isfinite(np.real(np.diagonal(S_hat, axis1=1, axis2=2))), axis=1)
     P_floor, B_clip = compute_fixed_thresholds(S_hat, valid)
@@ -964,6 +984,21 @@ def _run_loglike_on_group_cuda(
         fit_alpha=True, fit_phi=fit_phi, max_iter=max_iter, n_starts=n_starts, seed=group["gps"], backend=backend,
         init_params=env_params,
     )
+    # Exact nested-null guard: evaluate the null likelihood directly at the
+    # alternative's nuisance solution (alpha off). If the alternative's
+    # optimizer found a better basin of the SHARED nuisance model, this hands
+    # it to the null for free instead of reporting it as spurious signal.
+    lnL_env_at_qif = float(loglike_et_qif_cuda(
+        float("-inf"), qif_params["rho_coeffs"], qif_params["P_coeffs"],
+        qif_params["B_real_coeffs"], qif_params["B_imag_coeffs"], qif_params["phi_coeffs"],
+        data_obj, L=L, c0=c0, lP=lP, gamma=gamma,
+        use_planck_scale=use_planck_scale, backend=backend,
+    ))
+    if lnL_env_at_qif > lnL_env:
+        lnL_env = lnL_env_at_qif
+        env_params = {k: (v if k == "alpha_val" else np.asarray(v).copy())
+                      for k, v in qif_params.items()}
+        env_params["alpha_val"] = float("-inf")
     lr = 2.0 * (lnL_qif - lnL_env)
     A_h_hat = float(np.exp(qif_params["alpha_val"])) if np.isfinite(qif_params["alpha_val"]) else 0.0
     results["baseline"] = {

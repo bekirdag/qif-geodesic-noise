@@ -181,6 +181,18 @@ Notes:
 
 ## Findings (v0.2, corrected pipeline)
 
+> **SUPERSEDED (2026-07-02, later the same day) — see v0.3:** answering the referee
+> questions in `docs/quesitons.md` exposed three further pipeline defects (absolute
+> finite-difference steps vs. 1e-24-scale parameters; insufficient nested-fit
+> symmetrization; a bin layout that discarded 99.6% of the spectral data). All v0.2
+> numbers below are superseded by **`docs/et_geodesic_noise_paper_v0.3.pdf`**, whose
+> central finding is that the unconstrained-nuisance LR search has no measurable
+> detection power against the template (injections to 256 sigma_F fully absorbed;
+> verified honest) and functions as an upper-limit machine
+> (conservative UL95 ~ 7.7e-48 Hz^-1 at 128 s). Full record:
+> `test-runs/20260702_eps_bug_postmortem_and_rerun.md` and
+> `docs/answers_to_questions_v0.2.md`.
+
 **The v0.1 results (identical negative LR across all groups, bootstrap p=1.0) are
 withdrawn.** They were artifacts of scale-inappropriate parameter bounds/clips that
 pinned every fit at a data-independent corner solution; the optimizer never consumed

@@ -475,6 +475,26 @@ def _open_uniform_knots(x_min: float, x_max: float, n_coeff: int, k: int = 3) ->
     return knots
 
 
+def _open_log_knots(x_min: float, x_max: float, n_coeff: int, k: int = 3) -> np.ndarray:
+    """Open knot vector with geometrically spaced interior knots.
+
+    For spectra analyzed on log-spaced bins, uniform-in-frequency knots put
+    almost no resolution in the lowest decade (where an f^-gamma signal
+    lives); geometric spacing matches the bin density.
+    """
+    if x_min <= 0:
+        return _open_uniform_knots(x_min, x_max, n_coeff, k)
+    if n_coeff < k + 1:
+        raise ValueError("n_coeff must be at least k+1")
+    n_interior = n_coeff - k - 1
+    if n_interior > 0:
+        interior = np.geomspace(x_min, x_max, n_interior + 2)[1:-1]
+        knots = np.concatenate([np.full(k + 1, x_min), interior, np.full(k + 1, x_max)])
+    else:
+        knots = np.concatenate([np.full(k + 1, x_min), np.full(k + 1, x_max)])
+    return knots
+
+
 def _make_synthetic_data(n_f: int = 8, n_coeff: int = 6, r: int = 1, seed: int = 0) -> dict:
     rng = np.random.default_rng(seed)
 
@@ -658,7 +678,20 @@ def _compute_welch_csd_matrix(
     max_bins: int | None = None,
     line_mask: list[tuple[float, float]] | None = None,
     window: str = "hann",
+    bin_spacing: str = "log",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Welch cross-spectral matrices on an averaged analysis-bin grid.
+
+    When ``max_bins`` is set, native Welch bins are AVERAGED into ``max_bins``
+    blocks with ``bin_spacing`` = "log" (default) or "linear" edges, and
+    ``m_eff`` scales with the number of native bins per block (corrected for
+    the window-induced correlation between neighboring native bins).
+    ``bin_spacing`` = "subsample" reproduces the historical behavior of keeping
+    every Nth native bin, which discards the data between kept bins and, for a
+    linear grid over a wide band, leaves a single analysis bin below ~100 Hz --
+    that starves an f^-gamma search of exactly the frequencies that carry its
+    information.
+    """
     n_samples = min(len(x) for x in data)
     nperseg = int(max(8, round(nperseg_seconds * fs)))
     nperseg = min(nperseg, n_samples)
@@ -719,24 +752,94 @@ def _compute_welch_csd_matrix(
     # edges keep describing one Welch bin.
     df = float(freqs[1] - freqs[0]) if len(freqs) > 1 else 1.0
 
-    if max_bins is not None and len(freqs) > max_bins:
-        idx = np.linspace(0, len(freqs) - 1, max_bins).round().astype(int)
-        freqs = freqs[idx]
-        S_hat = S_hat[idx]
-
     m_eff_val = _effective_m(nseg)
-    m_eff = np.full_like(freqs, float(m_eff_val))
-    f_min = freqs - 0.5 * df
-    f_max = freqs + 0.5 * df
+
+    if max_bins is not None and len(freqs) > max_bins and bin_spacing != "subsample":
+        # Correlation between neighboring native bins induced by the window
+        # (for Hann, adjacent-bin rho^2 ~ 0.44): the effective number of
+        # independent native bins in a block of n is n / (1 + 2*sum(1-j/n)*rho_j^2).
+        w2 = w ** 2
+        W = np.abs(np.fft.rfft(w2)) / np.sum(w2)
+        rho_sq = (W[1:] ** 2)
+        rho_sq = rho_sq[rho_sq > 1e-6]
+
+        def _n_indep(n: int) -> float:
+            if n <= 1:
+                return float(max(n, 1))
+            j = np.arange(1, min(len(rho_sq), n - 1) + 1)
+            corr = float(np.sum((1.0 - j / n) * rho_sq[: len(j)]))
+            return n / (1.0 + 2.0 * corr)
+
+        f_lo = float(freqs[0]) - 0.5 * df
+        f_hi = float(freqs[-1]) + 0.5 * df
+        if bin_spacing == "log" and f_lo > 0:
+            edges = np.geomspace(f_lo, f_hi, max_bins + 1)
+        else:
+            edges = np.linspace(f_lo, f_hi, max_bins + 1)
+        which = np.searchsorted(edges, freqs, side="right") - 1
+        which = np.clip(which, 0, max_bins - 1)
+
+        freqs_b, fmin_b, fmax_b, S_b, m_b = [], [], [], [], []
+        for b in range(max_bins):
+            sel = which == b
+            n_nat = int(sel.sum())
+            if n_nat == 0:
+                continue
+            f_sel = freqs[sel]
+            freqs_b.append(float(np.exp(np.mean(np.log(f_sel)))) if bin_spacing == "log"
+                           else float(np.mean(f_sel)))
+            fmin_b.append(float(f_sel[0]) - 0.5 * df)
+            fmax_b.append(float(f_sel[-1]) + 0.5 * df)
+            S_b.append(np.mean(S_hat[sel], axis=0))
+            m_b.append(m_eff_val * _n_indep(n_nat))
+        freqs = np.asarray(freqs_b)
+        f_min = np.asarray(fmin_b)
+        f_max = np.asarray(fmax_b)
+        S_hat = np.asarray(S_b)
+        m_eff = np.asarray(m_b)
+    else:
+        if max_bins is not None and len(freqs) > max_bins:
+            idx = np.linspace(0, len(freqs) - 1, max_bins).round().astype(int)
+            freqs = freqs[idx]
+            S_hat = S_hat[idx]
+        m_eff = np.full_like(freqs, float(m_eff_val))
+        f_min = freqs - 0.5 * df
+        f_max = freqs + 0.5 * df
 
     valid = f_min > 0
     return freqs[valid], f_min[valid], f_max[valid], S_hat[valid], m_eff[valid]
 
 
-def _build_initial_coeffs(S_hat: np.ndarray, n_coeff: int, r: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def _spline_design_matrix(knots: np.ndarray, freqs: np.ndarray, n_coeff: int) -> np.ndarray:
+    """B-spline design matrix Phi (n_f x n_coeff): Phi @ coeffs = evaluate_spline(coeffs)."""
+    Phi = np.zeros((len(freqs), n_coeff))
+    for j in range(n_coeff):
+        e = np.zeros((n_coeff, 1))
+        e[j, 0] = 1.0
+        Phi[:, j] = evaluate_spline(e, knots, freqs)[:, 0]
+    return Phi
+
+
+def _build_initial_coeffs(S_hat: np.ndarray, n_coeff: int, r: int,
+                          freqs: np.ndarray | None = None,
+                          knots: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     diag = np.real(np.diagonal(S_hat, axis1=1, axis2=2))
     median_diag = np.maximum(np.median(diag, axis=0), 1e-300)
     P_coeffs = np.tile(np.log(median_diag), (n_coeff, 1))
+    if freqs is not None and knots is not None:
+        # Least-squares spline fit of the log periodogram per channel: a flat
+        # start is many e-folds from the true PSD shape and needlessly hard
+        # for a 200+-dimensional finite-difference optimization.
+        try:
+            Phi = _spline_design_matrix(knots, freqs, n_coeff)
+            y = np.log(np.maximum(diag, 1e-300))
+            good = np.all(np.isfinite(y), axis=1)
+            if int(good.sum()) >= n_coeff:
+                sol, *_ = np.linalg.lstsq(Phi[good], y[good], rcond=None)
+                if np.all(np.isfinite(sol)):
+                    P_coeffs = sol
+        except Exception:
+            pass
     rho_coeffs = np.zeros((n_coeff, 1))
     B_real_coeffs = np.zeros((n_coeff, 3, r))
     B_imag_coeffs = np.zeros((n_coeff, 3, r))
@@ -901,7 +1004,8 @@ def fit_model(
     seed: int | None = None,
     init_params: dict | None = None,
 ) -> tuple[dict, float]:
-    rho_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs = _build_initial_coeffs(S_hat, n_coeff, r)
+    rho_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs = _build_initial_coeffs(
+        S_hat, n_coeff, r, freqs=freqs, knots=knots)
     if init_params is not None:
         # Warm start (e.g. the alternative fit from the null optimum). With the
         # signal initialized "off", the H1 optimizer starts at the H0 optimum and
@@ -930,6 +1034,23 @@ def fit_model(
         alpha_log_center=alpha_log_center,
         B_scale=B_scale,
     )
+
+    # Per-parameter finite-difference steps. scipy's default eps (~1.5e-8) is an
+    # ABSOLUTE step: applied to B coefficients of physical scale ~1e-24 it
+    # inflates B B^H by ~32 orders of magnitude, the numerical gradient is pure
+    # garbage (~1e24), every line search fails, and L-BFGS-B exits at nit=0
+    # with the start point untouched. Steps must be matched to each block's scale.
+    eps_parts: list[np.ndarray] = []
+    if fit_alpha:
+        eps_parts.append(np.full(1, 1e-4))
+    eps_parts.append(np.full(n_coeff, 1e-4))                       # rho logits
+    eps_parts.append(np.full(n_coeff * 3, 1e-4))                   # log P
+    eps_B = 1e-4 * max(B_scale, 1e-300)
+    eps_parts.append(np.full(n_coeff * 3 * r, eps_B))              # B real
+    eps_parts.append(np.full(n_coeff * 3 * r, eps_B))              # B imag
+    if fit_phi:
+        eps_parts.append(np.full(n_coeff * 2, 1e-4))               # phases
+    eps_vec = np.concatenate(eps_parts)
 
     def objective(x: np.ndarray) -> float:
         alpha_val_i, rho_c, P_c, B_r, B_i, phi_c = _unpack_params(x, n_coeff, r, fit_alpha, fit_phi)
@@ -999,7 +1120,12 @@ def fit_model(
             x0 = _pack_params(alpha_j, rho_j, P_j, B_rj, B_ij, phi_j, fit_alpha, fit_phi)
 
         x0 = _clip_to_bounds(x0, bounds)
-        res = minimize(objective, x0, method="L-BFGS-B", bounds=bounds, options={"maxiter": max_iter})
+        # maxfun must accommodate finite-difference gradients: each L-BFGS-B
+        # iteration costs ~(dim+1) evaluations; scipy's default maxfun=15000
+        # silently truncates a 240-dim fit after ~60 gradient evaluations.
+        res = minimize(objective, x0, method="L-BFGS-B", bounds=bounds,
+                       options={"maxiter": max_iter, "eps": eps_vec,
+                                "maxfun": max(15000, 2 * max_iter * (len(x0) + 1))})
         if res.fun < best_fun:
             best_fun = float(res.fun)
             best_res = res
@@ -1064,20 +1190,57 @@ def fit_nested_pair(
         S_hat, m_eff, freqs, f_min, f_max, knots, P_floor, B_clip, n_coeff, r,
         fit_alpha=True, seed=seed, init_params=env_params, **common,
     )
-    # cross-pollination: give the null the alternative's nuisance solution
-    env_params_x, lnL_env_x = fit_model(
-        S_hat, m_eff, freqs, f_min, f_max, knots, P_floor, B_clip, n_coeff, r,
-        fit_alpha=False, seed=seed, init_params=qif_params, **common,
-    )
-    if lnL_env_x > lnL_env:
-        env_params, lnL_env = env_params_x, lnL_env_x
-        # and let the alternative benefit from the improved null in turn
+
+    def _env_at(params: dict) -> float:
+        # Direct evaluation of the NULL likelihood at a nuisance solution
+        # (no fit). Whenever the alternative's optimizer finds a better basin
+        # of the SHARED nuisance model, this hands the same basin to the null
+        # for free and caps the LR at 2x the genuine alpha contribution.
+        return float(loglike_et_qif(
+            float("-inf"), params["rho_coeffs"], params["P_coeffs"],
+            params["B_real_coeffs"], params["B_imag_coeffs"], params["phi_coeffs"],
+            S_hat, m_eff, freqs, f_min, f_max, knots,
+            L=L, c0=c0, lP=lP, gamma=gamma, use_planck_scale=use_planck_scale,
+            T_over_f2_avg=T_over_f2_avg, T_over_fgamma_avg=T_over_fgamma_avg,
+            P_floor=P_floor, B_clip=B_clip,
+        ))
+
+    # Iterated cross-pollination: a single ping-pong round is not enough --
+    # the alternative refit can jump to a better nuisance basin AFTER the null
+    # got its one chance, leaving a spurious LR > 0 with alpha at the floor.
+    tol = 1e-6
+    for _ in range(4):
+        improved = False
+        v = _env_at(qif_params)
+        if v > lnL_env + tol:
+            env_params = {k: (np.asarray(qif_params[k]).copy() if k != "alpha_val" else float("-inf"))
+                          for k in qif_params}
+            env_params["alpha_val"] = float("-inf")
+            lnL_env = v
+            improved = True
+        env_params_x, lnL_env_x = fit_model(
+            S_hat, m_eff, freqs, f_min, f_max, knots, P_floor, B_clip, n_coeff, r,
+            fit_alpha=False, seed=seed, init_params=env_params, **common,
+        )
+        if lnL_env_x > lnL_env + tol:
+            env_params, lnL_env = env_params_x, lnL_env_x
+            improved = True
         qif_params_x, lnL_qif_x = fit_model(
             S_hat, m_eff, freqs, f_min, f_max, knots, P_floor, B_clip, n_coeff, r,
             fit_alpha=True, seed=seed, init_params=env_params, **common,
         )
-        if lnL_qif_x > lnL_qif:
+        if lnL_qif_x > lnL_qif + tol:
             qif_params, lnL_qif = qif_params_x, lnL_qif_x
+            improved = True
+        if not improved:
+            break
+    # Final exact guard: the null gets the alternative's nuisances directly.
+    v = _env_at(qif_params)
+    if v > lnL_env:
+        env_params = {k: (np.asarray(qif_params[k]).copy() if k != "alpha_val" else float("-inf"))
+                      for k in qif_params}
+        env_params["alpha_val"] = float("-inf")
+        lnL_env = v
     return env_params, lnL_env, qif_params, lnL_qif
 
 
@@ -1330,8 +1493,9 @@ def _run_loglike_on_group(
     if len(freqs) < n_coeff:
         raise ValueError("Not enough frequency bins for the requested spline coefficients.")
 
-    knots = _open_uniform_knots(freqs[0], freqs[-1], n_coeff, k=3)
-    rho_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs = _build_initial_coeffs(S_hat, n_coeff, r)
+    knots = _open_log_knots(freqs[0], freqs[-1], n_coeff, k=3)
+    rho_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs = _build_initial_coeffs(
+        S_hat, n_coeff, r, freqs=freqs, knots=knots)
 
     valid = np.all(np.isfinite(np.real(np.diagonal(S_hat, axis1=1, axis2=2))), axis=1)
     P_floor, B_clip = compute_fixed_thresholds(S_hat, valid)

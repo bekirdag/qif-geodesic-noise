@@ -1,0 +1,397 @@
+% v0.3 -- major revision 2026-07-02 (same day as v0.2), prompted by the referee
+% questions in docs/quesitons.md: two further optimizer defects found and fixed,
+% log-spaced analysis bins, M(rho) derivation, identifiability theorem, profiled
+% Fisher, two-reading bounds comparison, pre-declared detection rule.
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+\hypersetup{colorlinks=true, linkcolor=blue, citecolor=blue, urlcolor=blue}
+\setlist[itemize]{leftmargin=*}
+\setlist[enumerate]{leftmargin=*}
+
+\graphicspath{{figures/}}
+
+\newcommand{\Ah}{A_h}
+\newcommand{\Sh}{S_h}
+\newcommand{\betaeff}{\beta}
+
+\title{A Phenomenological Search for Geodesic-Diffusion Noise in the Einstein Telescope:\\
+\large Model Derivation, Identifiability, Pipeline Validation, and Sensitivity on ET-MDC1 Data (v0.3)}
+
+\author{Bekir Da\u{g}\\Independent Researcher\\\texttt{bekir@piyote.com}}
+\date{July 2, 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We specify and validate a phenomenological search for \emph{geodesic-diffusion noise} in the Einstein Telescope (ET): a stochastic optical-path-noise component with one-sided strain power spectral density $\Sh(f) = \Ah (f/f_0)^{-\gamma}$, with the random-walk index $\gamma = 2$ as the primary case. Version 0.3 is a major revision. First, the channel covariance template $\mathbf{M}(\rho)$, treated as ad hoc in earlier versions, is \emph{derived} from a shared-tunnel path-noise model, giving the correlation parameter $\rho$ a physical meaning. Second, we prove a gauge-invariant identifiability statement: the product of the three off-diagonal cross-spectra is invariant under per-channel phase calibration, is non-negative for any diagonal-plus-rank-1 environmental model, and is negative for the signal --- and we show this protection provably fails at environmental rank 2. Third, the empirical program is rebuilt: an external referee review exposed two further optimization defects in the v0.2 reference implementation (absolute finite-difference steps applied to parameters twenty orders of magnitude smaller, and insufficient iteration of the nested-fit symmetrization), as well as an analysis-bin layout that discarded 99.6\% of the spectral data and starved the search band. All v0.2 numbers are withdrawn and replaced by results from the corrected pipeline on log-spaced averaged bins. On the ET-MDC1 ``loudest'' sample sets all eight groups are consistent with the null. The central --- and sobering --- empirical finding of this version concerns the search itself: with an \emph{unconstrained} environmental nuisance model, the likelihood-ratio statistic has no measurable power against the geodesic-diffusion template. Injections up to $256\times$ the naive Fisher scale ($\Ah = 4.6\times10^{-46}\,\mathrm{Hz^{-1}}$ at 64\,s) are absorbed completely ($\Lambda \approx 0$), and we verify the absorption is genuine rather than an optimizer failure: the fitted signal-free model exceeds the likelihood of the generating truth. The mechanism is geometric: the tangent space of the diagonal+rank-1+phase model covers five of the six off-diagonal degrees of freedom of the three-channel cross-spectrum, and the nonlinear freedom to relocate the fitted factor shadows the template in the remaining direction, so the gauge-invariant sign obstruction protects identifiability only as a curvature effect. A production search must therefore constrain the environmental model (physical priors, witness channels, clean-stretch nulls) or employ a dedicated sign-channel statistic; the naive Fisher forecast quantifies what such constraints can recover. We give that forecast, an existing-bounds comparison that distinguishes the strain-noise and path-length-noise readings (under the latter, the paper's own Planck mapping implies short-baseline experiments already constrain the benchmark far below $\alpha = 1$), a stochastic-background confusion analysis based on the rank of the channel covariance, and a pre-declared detection rule. All code, data manifests, validation logs, and both post-mortems are public.
+\end{abstract}
+
+\noindent\textbf{Keywords:} Einstein Telescope, stochastic noise, cross-spectral density, complex Wishart, likelihood-ratio test, quantum-gravity phenomenology
+
+\section{Scope, epistemic posture, and version history}
+\label{sec:scope}
+
+This paper is a data-analysis specification and validation study for a phenomenological noise search. It makes no claim to derive quantum gravity. The hypothesis under test is operational: \emph{do the three ET strain channels share an excess correlated stochastic component with a power-law spectrum falling as $f^{-\gamma}$, beyond what instrument noise and an environmental coherence model explain?}
+
+The version history is part of the scientific record and we state it plainly. The v0.1 empirical results (identical negative likelihood ratios across all datasets) were artifacts of parameter boxes that excluded the physical scale of strain data (Appendix~\ref{app:postmortem1}). The v0.2 revision fixed that defect and published a new empirical section; an external referee review of v0.2 prompted checks that exposed \emph{two further} optimization defects and a data-wasting analysis-bin layout (Appendix~\ref{app:postmortem2}), so the v0.2 empirical section is withdrawn in turn. Every number in this paper comes from the v0.3 implementation, which passes the diagnostic battery of Section~\ref{sec:diagnostics}. We draw one methodological conclusion from this history: \textbf{optimizer diagnostics are results}, and Section~\ref{sec:results} reports them alongside every headline number.
+
+\section{Signal model}
+\label{sec:model}
+
+\subsection{Spectrum and units}
+
+We parameterize the one-sided strain PSD of the hypothesized component as
+\begin{equation}
+\Sh(f) \;=\; \Ah \left(\frac{f}{f_0}\right)^{-\gamma},
+\qquad f_0 \equiv 1~\mathrm{Hz},
+\label{eq:psd}
+\end{equation}
+where $\Ah$ carries units of $\mathrm{Hz}^{-1}$ and $\gamma = 2$ (Brownian random walk of optical path length) is the primary index.
+
+\subsection{Planck-scale mapping and the two readings}
+\label{sec:planck}
+
+A dimensionless amplitude $\alpha$ can be defined through
+\begin{equation}
+\Ah \;=\; \frac{\alpha\, c_0\, \ell_P}{2\pi^2 L^2 f_0^{2}},
+\label{eq:planck}
+\end{equation}
+with $\ell_P$ the Planck length and $L$ the arm length. For ET ($L = 10^4$\,m), $\alpha = 1$ corresponds to $\Ah^{\rm Pl} = 2.45\times10^{-36}\,\mathrm{Hz^{-1}}$.
+
+Equation~\eqref{eq:planck} embodies a specific physical reading --- an $L$-\emph{independent path-length diffusion} $S_{\delta\ell}$, converted to strain by $\Sh = S_{\delta\ell}/L^2$ --- and that reading has consequences the earlier versions of this paper did not draw. If $S_{\delta\ell}$ is the invariant quantity, a \emph{shorter} baseline converts the same path noise into \emph{larger} strain: short-baseline experiments are intrinsically favored, and bounds transfer between instruments as $\Ah^{(2)} = \Ah^{(1)} (L_1/L_2)^2$. (The v0.2 statement that ``longer arms win'' under this reading was backwards.) Alternatively, if the disturbance is a metric-level (strain) noise, $\Ah$ is instrument-independent and long-baseline sensitivity wins. The two readings differ by $(L_{\rm exp}/L_{\rm ET})^2$ --- ten orders of magnitude for a laboratory-scale experiment --- so \emph{every} cross-experiment comparison in this paper states its reading explicitly (Section~\ref{sec:bounds}).
+
+\section{Derivation of the channel covariance template}
+\label{sec:derivation}
+
+Earlier versions presented the template as idealized phenomenology. It is in fact derivable, with all of its structure, from a minimal physical model of path noise in the triangular topology.
+
+Model each interferometer output as the Michelson difference of the optical-path noise in its two arms, with a consistent cyclic orientation around the triangle:
+\begin{equation}
+h_1 = \frac{\delta a_1 - \delta b_1}{L},\qquad
+h_2 = \frac{\delta b_2 - \delta c_2}{L},\qquad
+h_3 = \frac{\delta c_3 - \delta a_3}{L},
+\end{equation}
+where tunnel $a$ hosts beams $a_1$ (detector 1) and $a_3$ (detector 3), and cyclically. Assume each beam's path noise has one-sided PSD $S_{\rm arm}(f)$, zero correlation between different tunnels, and correlation coefficient $\kappa(f) \in [0,1]$ between the two beams co-located in one tunnel. Then
+\begin{equation}
+\mathrm{Var}(h_i) = \frac{2 S_{\rm arm}}{L^2},
+\qquad
+\mathrm{Cov}(h_i, h_j) = -\,\frac{\kappa\, S_{\rm arm}}{L^2}
+\quad (i \ne j),
+\end{equation}
+the covariance being negative because the shared tunnel enters the two Michelson differences with opposite signs. Writing $\Sh = S_{\rm arm}/L^2$ for the per-channel strain PSD,
+\begin{equation}
+\bm{\Sigma}_{\rm sig}(f) \;=\; \tfrac{1}{2}\,\Sh(f)\, \mathbf{M}(\rho),
+\qquad
+\mathbf{M}(\rho) = \begin{pmatrix} 2 & -\rho & -\rho \\ -\rho & 2 & -\rho \\ -\rho & -\rho & 2 \end{pmatrix},
+\qquad \rho = \kappa,
+\label{eq:template}
+\end{equation}
+which reproduces the template exactly: the diagonal 2 is the two-arm Michelson variance, the three negative off-diagonals are the shared-tunnel terms, and the $\tfrac12$ prefactor makes $\mathrm{diag}(\bm{\Sigma}_{\rm sig}) = \Sh$, so $\Ah$ is the per-channel strain PSD at $f_0$.
+
+$\rho$ therefore has a physical meaning: \textbf{the transverse correlation of the diffusion field between the two beams sharing a tunnel} (beam separations are of order meters). Microscopic correlation lengths give $\rho \to 0$; a field coherent across the tunnel cross-section gives $\rho \to 1$. The derivation also supplies a consistency check: at $\rho = 1$, $\mathbf{M}(1)$ is the graph Laplacian of the triangle, the null-stream sum telescopes to zero, and the component becomes indistinguishable from a gravitational-wave background at the covariance level (Section~\ref{sec:nullstream}).
+
+Structures excluded by Eq.~\eqref{eq:template}: unequal per-tunnel correlations; correlations between different tunnels (the $\rho \to 1$ regime, where the parameterization degenerates anyway); complex (delayed) correlations, which enter at $O((2\pi f L/c_0)^2) \lesssim 4\%$ below 1\,kHz for $L = 10$\,km; and unequal per-beam noise powers (absorbed to first order by the instrument-PSD splines). The frequency dependence of $\rho$ is retained as a spline in the implementation, but the primary analysis fixes $\rho$ to constants (Section~\ref{sec:rule}).
+
+\subsection{Response function}
+The propriety of $\mathbf{R}(f) \approx \mathbf{I}$ depends on the reading of Section~\ref{sec:planck}. Under the path-length reading the disturbance adds to the measured optical path directly: there is no antenna pattern, and $\mathbf{R} = \mathbf{I}$ is exact up to the percent-level delay corrections quoted above and the sensing/calibration response, which the pipeline accepts as an external transfer function. Under the metric/strain reading (and for any true GW background present in the data), the $60^\circ$ arms and frequency-dependent response reshape the cross-channel structure at $O(1)$, and a full-response injection study remains a commissioning gate before real-data claims for that reading.
+
+\section{The null stream}
+\label{sec:nullstream}
+
+For a closed triangle the sum $n(t) = E_1 + E_2 + E_3$ cancels gravitational waves exactly, while $\mathbf{u}^{\rm T} \mathbf{M}(\rho)\, \mathbf{u} = 2(1-\rho)$ for $\mathbf{u} = (1,1,1)^{\rm T}/\sqrt{3}$: geodesic-diffusion power survives in the null stream unless $\rho \to 1$. Figure~\ref{fig:psd} shows the measured MDC1 channel ASDs and the null stream for a 128\,s stretch: the ratio is $1.74 \simeq \sqrt{3}$, the signature of independent channel noise, and pairwise coherences (Figure~\ref{fig:coherence}) sit at the $1/N_{\rm seg}$ floor.
+
+Two caveats sharpened since v0.2. (i) No physical prior excludes $\rho \to 1$; in that limit the null stream empties of signal and the discriminator inverts --- a candidate with $\hat\rho \to 1$ must be treated as GW-indistinguishable pending a spectral-shape and isotropy analysis. (ii) With realistic calibration errors $\epsilon$, the naive equal-weight null combination leaks GW power at $O(\epsilon^2)$ (the leakage amplitude is first order, and $\mathbf{u}$ is a stationary point of the GW response), which is adequate for the veto role the null stream plays here.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.72\textwidth]{fig_psd_nullstream.pdf}
+\caption{Amplitude spectral densities of the three ET-MDC1 channels (BBH\_snr\_306, 128\,s, Welch 4\,s/50\%) and of the null stream $E_1+E_2+E_3$, a factor $\simeq\sqrt{3}$ above a single channel as expected for independent noise. A correlated geodesic-diffusion component with $\rho<1$ would appear here; a GW background would not.}
+\label{fig:psd}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.72\textwidth]{fig_coherence.pdf}
+\caption{Pairwise magnitude-squared coherences for the same stretch, against the no-coherence expectation $1/N_{\rm seg}$ (dashed).}
+\label{fig:coherence}
+\end{figure}
+
+\section{Total covariance model and identifiability}
+\label{sec:total}
+
+For each analysis bin $k$,
+\begin{equation}
+\bm{\Sigma}_k \;=\; \mathbf{G}_k \left( \bm{\Sigma}^{\rm inst}_k + \bm{\Sigma}^{\rm env}_k + \bm{\Sigma}^{\rm sig}_k \right) \mathbf{G}_k^\dagger ,
+\end{equation}
+with diagonal instrument PSDs parameterized by open cubic B-splines in $\log P$ with geometrically spaced knots ($N_c$ coefficients per channel); a rank-$r$ environmental factor $\mathbf{B}_k\mathbf{B}_k^\dagger$ with spline-smoothed complex factors ($r = 1$ default); the signal template of Eq.~\eqref{eq:template} with exact bin averages $\langle f^{-\gamma}\rangle_k$; and phase-only calibration $\mathbf{G}_k = \mathrm{diag}(1, e^{i\phi_{2}(f_k)}, e^{i\phi_{3}(f_k)})$, where $\phi_{2}, \phi_{3}$ are smooth spline curves ($2N_c$ parameters total, \emph{not} per-bin phases).
+
+\subsection{A gauge-invariant identifiability statement}
+\label{sec:identifiability}
+
+Write $t(f) \equiv \Sigma_{12}\Sigma_{23}\Sigma_{31}$ for the product of the three off-diagonal cross-spectra. Three elementary facts, verified numerically to machine precision in the validation suite:
+\begin{enumerate}
+\item $t$ is \textbf{invariant under per-channel phase calibration} (and sign flips): the phases cancel around the closed loop $1\to2\to3\to1$.
+\item For any model of the form \emph{diagonal + rank-1 factor}, $t = |b_1 b_2 b_3|^2 \ge 0$, real --- adding any diagonal never changes the off-diagonals, and no phase calibration changes $t$.
+\item For the signal template, $t = \left(-\tfrac{\rho}{2} \Ah \langle f^{-\gamma}\rangle\right)^{3} < 0$.
+\end{enumerate}
+Hence $\mathrm{Re}\,t < 0$ is a calibration-gauge-invariant signature that the $r=1$ environmental model cannot produce at any frequency, and the identifiability of the signal against that model is a theorem, not a convention.
+
+\textbf{But the protection is a curvature effect, not a first-order one.} The tangent space of the rank-1 factor at a generic point, $\delta(\mathbf{b}\mathbf{b}^\dagger) = \mathbf{b}\,\delta\mathbf{b}^\dagger + \delta\mathbf{b}\,\mathbf{b}^\dagger$, covers \emph{five of the six} real off-diagonal degrees of freedom of the $3\times3$ Hermitian cross-spectrum (verified numerically; adding the two phase-calibration tangents does not increase the rank). Only one linear direction is protected --- the one enforcing the sign constraint --- and the model retains the nonlinear freedom to relocate $\mathbf{b}(f)$ so as to shadow a template of moderate amplitude. The consequence, measured in Section~\ref{sec:injections}, is that the profile likelihood-ratio statistic with \emph{unconstrained} $\mathbf{B}$ has essentially no power against the template over the amplitude range tested: identifiability in principle (the sign theorem) does not translate into detectability in practice unless the environmental model is constrained by information external to the fit.
+
+\textbf{The protection fails at rank 2.} Random complex $3\times2$ factors produce $\mathrm{Re}\,t<0$ in $\sim$17\% of draws; more fundamentally, by the Ledermann bound a \emph{diagonal + rank-2} model can reproduce \emph{any} $3\times3$ Hermitian covariance exactly (three channels identify at most one factor). An $r=2$ fit is therefore constrained only by spline smoothness in frequency, and it can absorb the signal template legitimately. Consequently the $r=2$ configuration is \textbf{not a null test for the geodesic hypothesis; it is a GW/CBC-contamination veto} --- a gravitational-wave background occupies a rank-2 subspace of the channel space (Section~\ref{sec:sgwb}) and is fully absorbable at $r=2$, while a true geodesic component with $\rho < 1$ is full-rank.
+
+\subsection{The identifiable amplitude is $\betaeff = \rho \Ah$}
+\label{sec:beta}
+
+Decomposing $\mathbf{M}(\rho) = (2+\rho)\mathbf{I} - \rho\,\mathbf{J}$ shows the isotropic part is exactly degenerate with the instrument PSDs; the measurable content lies in the off-diagonals $\propto \rho\Ah$. A ridge $\Ah \propto 1/\rho$ at fixed $\betaeff = \rho\Ah$ exists by construction, terminated only by $\rho \le 1$, so a measurement of $\betaeff$ implies only $\Ah \ge \betaeff$. We therefore report $\betaeff$ as the primary fitted quantity and quote $\Ah$ limits at fixed template $\rho$. Section~\ref{sec:forecast} quantifies how much of the naive Fisher information survives profiling over the nuisance model --- the dominant sensitivity penalty of the search.
+
+\subsection{Spline richness and knot placement}
+Validation on real data showed both failure directions: too few coefficients let the $f^{-2}$ term absorb PSD misfit (spurious LR up to $\sim$700 in the v0.2-era runs), while \emph{any} sufficiently rich smooth diagonal model absorbs the genuine diagonal signal power (Section~\ref{sec:injections}). LR stability under $N_c$ variation is thus necessary but weak; the structural protection is the sign channel of Section~\ref{sec:identifiability}. Knots are geometrically spaced (uniform-in-frequency knots leave the decade below 400\,Hz --- where a $\gamma = 2$ signal lives --- essentially unresolved).
+
+\section{Spectral estimation and likelihood}
+\label{sec:likelihood}
+
+Welch cross-spectra (Hann window, 4\,s segments, 50\% overlap, one-sided normalization) are computed at native resolution and then \textbf{averaged into log-spaced analysis bins}. This replaces the v0.2 scheme, which \emph{subsampled} every $\sim$250th native bin on a linear grid: that scheme discarded 99.6\% of the spectral data and left a single analysis bin below 100\,Hz, starving a $\gamma=2$ search of precisely the frequencies that carry its information. With 64 log-spaced bins over 10\,Hz--Nyquist, 25 bins lie below 100\,Hz and all native bins contribute. The per-block effective number of averages accounts for the window-induced correlation between neighboring native bins,
+\begin{equation}
+m_{{\rm eff},k} \;=\; m_{\rm seg}\, \frac{n_k}{1 + 2\sum_{j\ge1}\left(1 - j/n_k\right)\varrho_j^2},
+\end{equation}
+where $n_k$ is the number of native bins in block $k$ and $\varrho_j$ is the normalized spectral window autocorrelation (for Hann, $\varrho_1^2 \approx 0.44$); $m_{\rm seg}$ is the overlap-corrected segment count. The bin-averaged matrices are modeled as complex Wishart, giving (up to constants)
+\begin{equation}
+\ln \mathcal{L} \;=\; -\sum_k m_{{\rm eff},k} \left[ \ln\det \bm{\Sigma}_k + \mathrm{tr}\!\left( \bm{\Sigma}_k^{-1} \widehat{\mathbf{S}}_k \right) \right].
+\label{eq:lnL}
+\end{equation}
+The Wishart approximation, the $m_{\rm eff}$ prescription, and the residual bin-to-bin correlations must be validated against time-domain simulations with the actual segmentation; this is the top-priority open validation item, fully specified in the commissioning plan.
+
+\section{Hypothesis test and optimization protocol}
+\label{sec:inference}
+
+We compare nested hypotheses $H_{\rm env}$ ($\Ah = 0$) and $H_{\rm sig}$ ($\Ah \ge 0$) through $\Lambda = 2[\ln\mathcal{L}(\widehat{\Theta}_{\rm sig}) - \ln\mathcal{L}(\widehat{\Theta}_{\rm env})] \ge 0$. A materially negative $\Lambda$, \emph{or a positive $\Lambda$ with the fitted amplitude at its lower boundary}, is an optimizer failure and must be treated as a pipeline error. Because $\Ah = 0$ is a boundary point at which $\rho$ is unidentified (a Davies problem stacked on the boundary problem), no asymptotic mixture is trusted; significance is calibrated by the configuration-matched bootstrap of Section~\ref{sec:bootstrap}.
+
+\subsection{Mandatory protocol}
+\label{sec:diagnostics}
+Every element below exists because its absence produced a concrete, observed failure (Appendices~\ref{app:postmortem1}--\ref{app:postmortem2}):
+\begin{enumerate}
+\item \textbf{Data-adaptive parameter boxes} centered on scales inferred from the data; overflow clips far outside any reachable value.
+\item \textbf{Scale-matched finite-difference steps.} Absolute default steps ($\sim$$10^{-8}$) applied to parameters of scale $10^{-24}$ produce garbage gradients ($\sim$$10^{24}$), failed line searches, and silent \texttt{nit=0} exits that return the untouched starting point. Steps must be per-parameter, matched to each block's scale; the evaluation budget (\texttt{maxfun}) must accommodate $(\mathrm{dim}+1)$ evaluations per gradient.
+\item \textbf{Informed initialization}: instrument-PSD splines start at the least-squares fit of the log periodogram, not at a flat median many e-folds from the answer.
+\item \textbf{Signal amplitude in log space with an effective zero}, and \textbf{profile-scan seeding} of the amplitude (its log-space gradient vanishes at zero).
+\item \textbf{Iterated, guarded nested-pair symmetrization.} The alternative fit starts at the null optimum. Cross-pollination (refitting each hypothesis from the other's nuisance solution) is \emph{iterated to convergence}, and the final null value is bounded below by a direct (fit-free) evaluation of the null likelihood at the alternative's nuisance solution. A single cross-pollination round is not sufficient: the alternative's optimizer can enter a better basin of the shared nuisance model after the null's last refit, leaving a spurious $\Lambda > 0$ with $\hat{\Ah}$ at the floor --- observed at $\Lambda = 19.8$ before this guard existed.
+\item \textbf{Dimension-invariance diagnostic}: results that are byte-identical across different model dimensions ($N_c$, $r$) mean the fits never moved. (The inverse of the usual stability check; this is the signature that exposed the v0.2 defects.)
+\item \textbf{Per-fit diagnostics reported with results}: optimizer status and iteration count, maximum scaled gradient, active-bound count, per-bin Wishart traces (near 3 for a healthy fit), and multi-start dispersion.
+\item \textbf{Basis-richness and knot-placement stability checks} on any candidate.
+\end{enumerate}
+
+\section{Significance calibration}
+\label{sec:bootstrap}
+
+Significance is calibrated by a parametric bootstrap: fit $H_{\rm env}$, draw Wishart replicates from the fitted null, refit \emph{both} hypotheses with the full protocol, and report the empirical tail probability. Because replicates carry the same optimizer noise as the observed statistic, residual optimization variance is absorbed into the calibration. Three stated limitations: the per-bin bootstrap inherits the Wishart independence assumption (it cannot calibrate bin-correlation errors; time-domain simulation is the designated closure); $n_b = 20$--$40$ resolves $p$ only to $\sim$0.03--0.05, so no smaller $p$ is quoted anywhere in this paper; and misspecification (glitches, lines, drift) requires the block-bootstrap and clean-stretch comparisons in the commissioning plan.
+
+\section{Validation on ET-MDC1 data}
+\label{sec:results}
+
+\subsection{Data and caveats}
+We use the ET-MDC1 ``loudest'' sample sets (five BBH groups, three consecutive BNS segments; 2048\,s frames at 8192\,Hz), fetched by the repository's manifest download script. These segments contain loud CBC injections by construction and are used deliberately and only as a \emph{pipeline shakedown} on real frame I/O, calibration conventions, and PSD shapes. No statement in this section is a statement about nature.
+
+\subsection{Null results on all groups}
+\label{sec:nullresults}
+
+Table~\ref{tab:groups} lists the per-group results (128\,s / 128 log bins, $N_c = 20$, $r=1$, fitted calibration phases, full protocol). All $\Lambda$ satisfy the coherence requirements of Section~\ref{sec:inference} and all groups are consistent with the bootstrap null distribution of Section~\ref{sec:bootres}.
+
+The contrast with v0.2 is itself a result. The v0.2 table showed $\Lambda$ up to 8.2 with a $\Lambda = 51.5$ ``outlier'' attributed to CBC cross-power; with working optimization every group collapses to the null, identifying those excesses as nuisance-model misfit that the crippled optimizer could not remove. Direct data-level diagnostics support this: for the former outlier segment, the null-stream ratio (1.7241 in 10--128\,Hz vs.\ $\sqrt3 = 1.7321$), the pairwise coherences (at the $1/N_{\rm seg}$ floor), and the off-diagonal sign pattern (random signs at noise level, not the coherent all-negative signal pattern) are indistinguishable from the quiet neighboring segments.
+
+\begin{table}[t]
+\centering
+\caption{Nested LR results on the ET-MDC1 loudest sets (v0.3 pipeline: 128\,s / 128 log-spaced bins per group, $N_c = 20$, $r = 1$, fitted calibration phases). $\hat{\Ah}$ is the maximum-likelihood amplitude of the alternative fit ($f_0 = 1$\,Hz); values at the numerical floor ($\sim$$10^{-60}$) indicate the boundary solution $\hat\Ah = 0$.}
+\label{tab:groups}
+\begin{tabular}{lrrr}
+\toprule
+Data set & GPS start & $\Lambda$ & $\hat{\Ah}$ [$\mathrm{Hz^{-1}}$] \\
+\midrule
+BBH\_snr\_306 & 1000245760 & 0.00 & $7.4\times10^{-60}$ \\
+BBH\_snr\_344 & 1002150400 & 0.00 & $7.7\times10^{-60}$ \\
+BBH\_snr\_379 & 1001558528 & 0.00 & $1.5\times10^{-58}$ \\
+BBH\_snr\_387 & 1001622016 & 0.00 & $7.4\times10^{-60}$ \\
+BBH\_snr\_587 & 1001619968 & 0.00 & $7.5\times10^{-60}$ \\
+BNS\_snr\_379 & 1001329152 & 0.00 & $7.5\times10^{-60}$ \\
+BNS\_snr\_379 & 1001331200 & 0.00 & $7.4\times10^{-60}$ \\
+BNS\_snr\_379 & 1001333248 & 0.00 & $7.5\times10^{-60}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Bootstrap calibration}
+\label{sec:bootres}
+
+A configuration-matched parametric bootstrap ($n_b = 20$, full refits, 64\,s / 64 log bins, BBH\_snr\_306) gives $\Lambda_{\rm obs} = 0.0000$ against null replicates spanning $[-0.0000, 0.0000]$ ($p = 0.95$). Figure~\ref{fig:bootstrap} shows the null distribution. Note what the guarded protocol does to the statistic: with the nuisance model able to absorb any boundary fluctuation, essentially \emph{all} null replicates sit at $\Lambda = 0$ --- the boundary mass approaches unity, far above the asymptotic $\tfrac12$, and the resulting $p$-value is uninformative rather than reassuring. This degeneracy is the null-side face of the no-power finding of Section~\ref{sec:injections}: a statistic that cannot exceed zero under signal injections cannot produce a meaningful tail under the null either. It is reported here as a property of the search, not as evidence about the data.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.62\textwidth]{fig_bootstrap_v03.pdf}
+\caption{Parametric bootstrap null distribution of $\Lambda$ (BBH\_snr\_306, 64\,s / 64 log bins, $n_b = 20$, full refits with the complete v0.3 protocol) and the observed statistic.}
+\label{fig:bootstrap}
+\end{figure}
+
+\subsection{Injection recovery: the honest threshold}
+\label{sec:injections}
+
+We inject $\Ah^{\rm inj} f^{-2} \mathbf{M}(0.5)$ into Wishart resamples of the fitted null (BBH\_snr\_306, 64\,s / 64 log bins) and rerun the full nested fit. Figure~\ref{fig:injection} and Table~\ref{tab:inj} give the outcome.
+
+The naive Fisher scale at this configuration is $\sigma_F = 1.78\times10^{-48}\,\mathrm{Hz^{-1}}$. No injection in the tested ladder (up to $256\,\sigma_F$) is recovered: the flexible nuisance model absorbs the template at every tested amplitude, and the sign-obstruction residual remains below threshold at this segment length.
+
+This replaces the v0.2 ``$8\,\sigma_F$ effective threshold,'' which was an artifact: the frozen v0.2 nuisance fits could not absorb anything, so the amplitude scan swept up the template's (nuisance-degenerate) diagonal power and reported it as recoverable signal. With working optimization the outcome inverts: the flexible instrument+environment model absorbs the template \emph{completely} over the entire tested ladder --- the geometric mechanism of Section~\ref{sec:identifiability} operating as predicted. We verified the absorption is honest, not an optimizer failure: at $256\,\sigma_F$ the fitted \emph{signal-free} model exceeds the log-likelihood of the generating truth (overfitting Wishart noise by the expected amount), so no better $H_{\rm env}$ optimum was left unfound. This is the paper's central empirical result: \textbf{the unconstrained-nuisance LR search, as specified, cannot detect the signal it targets in this amplitude range}, and any production design must either constrain $\mathbf{B}(f)$ with external information (witness channels, measured couplings, clean-stretch environmental solutions, physical priors) or add a statistic that tests the sign channel directly on the binned cross-spectra.
+
+\begin{table}[t]
+\centering
+\caption{Injection recovery (BBH\_snr\_306-conditioned Wishart resamples, 64\,s / 64 log bins, $\rho_{\rm inj}=0.5$; $\sigma_F$ is the naive Fisher scale at this configuration).}
+\label{tab:inj}
+\begin{tabular}{rrrr}
+\toprule
+$\Ah^{\rm inj}/\sigma_F$ & $\Ah^{\rm inj}$ [$\mathrm{Hz^{-1}}$] & $\Lambda$ & $\hat{\Ah}$ [$\mathrm{Hz^{-1}}$] \\
+\midrule
+0 & $0$ & 0.00 & $7.3\times10^{-60}$ \\
+4 & $7.1\times10^{-48}$ & 0.00 & $7.4\times10^{-60}$ \\
+8 & $1.4\times10^{-47}$ & 0.00 & $7.5\times10^{-60}$ \\
+16 & $2.8\times10^{-47}$ & 0.00 & $7.6\times10^{-60}$ \\
+32 & $5.7\times10^{-47}$ & 0.00 & $8.3\times10^{-60}$ \\
+64 & $1.1\times10^{-46}$ & 0.00 & $8.6\times10^{-60}$ \\
+128 & $2.3\times10^{-46}$ & 0.00 & $1.0\times10^{-59}$ \\
+256 & $4.6\times10^{-46}$ & 0.00 & $1.2\times10^{-59}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\textwidth]{fig_injection_v03.pdf}
+\caption{Injection recovery on real-data-conditioned resamples (v0.3 pipeline, 64\,s / 64 log bins). Left: $\Lambda$ versus injected amplitude in units of the naive Fisher scale $\sigma_F$. Right: recovered $\hat{\Ah}$ versus injected $\Ah$.}
+\label{fig:injection}
+\end{figure}
+
+\subsection{Profile-likelihood upper limit}
+\label{sec:ul}
+
+Fixing $\Ah$ on a logarithmic grid (template $\rho = 0.5$) and refitting all nuisance parameters at each point --- with \emph{continuation} warm starts, each point initialized at the previous point's solution --- yields the profile of Figure~\ref{fig:ul} for BBH\_snr\_306 (128\,s / 128 log bins).
+
+The exercise surfaced a resolution limit that the paper reports rather than hides. At this configuration $\ln\mathcal{L} \sim 1.7\times10^{8}$, so double-precision cancellation puts a noise floor of $\sim$0.4 per component on finite-difference gradients, and independently restarted fits scatter across nuisance basins by $O(50\text{--}80)$ log-likelihood units (measured directly: re-evaluating the \emph{null} at the best profile point's nuisances beats the single-restart null fit by $+76.4$, while the signal contribution at that same point is $-12.9$ --- the data \emph{disfavor} the template there once nuisance basins are equalized). A textbook $\Delta = 2.71$ crossing is therefore unresolvable with finite-difference gradients; the statistical crossing sits near $2\times10^{-48}\,\mathrm{Hz^{-1}}$ but cannot be certified. We quote a conservative limit using a convergence-noise-inflated threshold ($2.71 + 2\times$ the measured scatter) referenced to the best null found anywhere:
+\begin{equation}
+\Ah^{95\%} \;\lesssim\; 7.7\times10^{-48}~\mathrm{Hz^{-1}}
+\qquad (\text{BBH\_snr\_306, 128\,s, template } \rho = 0.5,\ f_0 = 1~\mathrm{Hz}),
+\end{equation}
+noise-limited, not statistics-limited; analytic Wishart gradients (closed form, planned) remove the limitation. Given Section~\ref{sec:beta}, this is an upper limit on template-like power at $\rho = 0.5$; its frequentist coverage under realistic noise is untested (a coverage study is specified in the commissioning plan), so it is quoted as procedure-defined.
+
+The upper limit survives the no-power finding for a structural reason worth stating: the absorption mechanism is \emph{one-sided}. Free nuisances can imitate an unmodeled signal present in the data (killing detection), but at fixed $\Ah$ the signal term is a positive-semidefinite \emph{addition} to the model covariance that no admissible nuisance setting can cancel ($P_i > 0$, $\mathbf{B}\mathbf{B}^\dagger \succeq 0$), so data lacking that power reject large fixed $\Ah$ regardless. Exclusion works where detection does not; the search as currently specified is an upper-limit machine.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.62\textwidth]{fig_profile_ul_v03.pdf}
+\caption{Profile deviance versus $\Ah$ (BBH\_snr\_306, 128\,s / 128 log bins, template $\rho = 0.5$), with the one-sided 95\% threshold.}
+\label{fig:ul}
+\end{figure}
+
+\section{Sensitivity: profiled Fisher, forecast, and existing bounds}
+\label{sec:forecast}
+
+\subsection{Naive versus profiled Fisher}
+The naive Fisher information for $\Ah$ at $\Ah = 0$ counts all template power, including everything the nuisance model absorbs. The local first-order correction is the \emph{profiled} Fisher --- $I_{AA} - I_{A\theta}I_{\theta\theta}^{-1}I_{\theta A}$ over the $\sim$220 nuisance parameters. At the 64\,s / 64-log-bin configuration we measure
+\begin{equation}
+\sigma_F^{\rm naive}(\Ah) = 1.78\times10^{-48}~\mathrm{Hz^{-1}},
+\qquad
+\sigma_F^{\rm prof}(\Ah) = 2.11\times10^{-48}~\mathrm{Hz^{-1}},
+\end{equation}
+a local nuisance-profiling penalty of a factor $\sim$1. The profiled Fisher is a \emph{local} quantity evaluated at the fitted null point; the injection ladder of Section~\ref{sec:injections} measures the \emph{global} absorption, which is stronger still because the rank-1 manifold curves toward the template as the fitted factor relocates. The operative statement of the pipeline's power is therefore the injection result, with the two Fisher numbers bracketing what environmental constraints can recover: a search whose $\mathbf{B}(f)$ is pinned by external information approaches $\sigma_F^{\rm naive}$; the unconstrained fit realizes neither.
+
+\subsection{Forecast and existing bounds: the reading matters}
+\label{sec:bounds}
+
+Figure~\ref{fig:forecast} shows the $T_{\rm obs}^{-1/2}$-scaled reach for both Fisher figures; under the constrained-model (naive) figure the 95\% sensitivity is $\Ah^{95\%} \approx 5.2\times10^{-49}\,\mathrm{Hz^{-1}}$ per 2048\,s segment and $\approx 4.2\times10^{-51}\,\mathrm{Hz^{-1}}$ per year; the locally profiled figure is $\approx 6.1\times10^{-49}\,\mathrm{Hz^{-1}}$ and $\approx 4.9\times10^{-51}\,\mathrm{Hz^{-1}}$ respectively. These curves are conditional forecasts: the naive curve is attainable only by a search whose environmental model is constrained by external information, and the band between the curves prices those constraints. The $T^{-1/2}$ scaling assumes a shared $\betaeff$ across segments with segment-local nuisances, and breaks at the floor set by \emph{common-mode} systematics (shared calibration error, response-model error, correlated environmental fields, the unsubtracted CBC foreground); split-half consistency of $\hat\betaeff$ and segment-regression drift monitoring are the standard diagnostics.
+
+Comparisons with published bounds must state the reading of Section~\ref{sec:planck}:
+\begin{itemize}
+\item \textbf{Strain reading} ($\Ah$ instrument-independent): mapped to $\gamma=2$ via $\Ah = S(f) (f/f_0)^2$, resonator limits give $\Ah \lesssim 3.6\times10^{-29}$ and $\lesssim 2.5\times10^{-33}\,\mathrm{Hz^{-1}}$~\cite{schiller}, and the TAMA-class level gives $\Ah \lesssim 2\times10^{-35}\,\mathrm{Hz^{-1}}$~\cite{schiller}. Under this reading ET improves on the best bound by many orders of magnitude even after the profiling penalty, and the Planck benchmark $\alpha = 1$ ($\Ah^{\rm Pl} = 2.45\times10^{-36}\,\mathrm{Hz^{-1}}$) is open parameter space that ET would decisively test.
+\item \textbf{Path-length reading} (the reading of Eq.~\eqref{eq:planck} itself): bounds transfer as $(L_{\rm exp}/L_{\rm ET})^2$, favoring short baselines. An illustrative laboratory resonator with $L_{\rm exp} \sim 0.1$\,m and a strain-level bound of $2.5\times10^{-33}\,\mathrm{Hz^{-1}}$ corresponds, in Eq.~\eqref{eq:planck}'s own normalization at its own baseline, to $\alpha \lesssim 10^{-7}$: \textbf{under this reading the $\alpha = 1$ benchmark is already excluded by orders of magnitude by short-baseline experiments}, and the v0.2 claim that ``$\alpha = 1$ is currently allowed'' does not survive. The motivation for an ET search under this reading is not discovery reach at $\alpha \sim 1$ but the complementary $L$-scaling test: the strain and path-length hypotheses differ by $(L_1/L_2)^2$ between instruments, so a joint analysis of short- and long-baseline data constrains the $L$-scaling of the underlying disturbance itself.
+\end{itemize}
+The honest summary: ET's case is strongest under the strain/metric reading; under the path-length reading ET contributes the long-baseline anchor of a two-baseline consistency test rather than raw reach.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.75\textwidth]{fig_forecast_v03.pdf}
+\caption{Projected ET sensitivity to $\Sh(f) = \Ah (f/f_0)^{-2}$ under the strain reading: naive Fisher (dashed) and profiled Fisher (solid band edge) against existing bounds mapped to the same parameterization. Under the path-length reading the comparison changes qualitatively (Section~\ref{sec:bounds}).}
+\label{fig:forecast}
+\end{figure}
+
+\subsection{Stochastic-background confusion}
+\label{sec:sgwb}
+
+An isotropic stochastic GW background in a closed triangle produces a channel covariance $S_{\rm gw}(f)\,\bm{\Gamma}$ whose overlap-reduction matrix annihilates the null-stream direction: \textbf{rank 2}. The geodesic template $\mathbf{M}(\rho<1)$ is rank 3. This gives the clean statements: (i) an $r=2$ environmental factor absorbs an SGWB exactly (the veto role of Section~\ref{sec:identifiability}); (ii) the null stream separates the classes in principle; but (iii) the CBC background spectrum $\Sh \propto f^{-7/3}$ is uncomfortably close to $f^{-2}$ over the sensitive decade, and in the $\rho \to 1$ limit (where $\mathbf{M}$ also degenerates to rank 2) an unsubtracted CBC foreground is a near-perfect impostor. At ET sensitivity the CBC background is loud; therefore a production search must fit the foreground \emph{jointly} (rank-2 $S_{\rm gw}\bm{\Gamma}$ with known ORF alongside the geodesic term) and report the geodesic statistic as the improvement over the foreground-inclusive null. This is a blocking commissioning item for real-data claims.
+
+\section{Pre-declared detection rule}
+\label{sec:rule}
+
+For the production search: (1) primary configuration fixed in advance --- $\gamma = 2$, constant $\rho$ profiled over $[0.05, 0.95]$, $N_c = 20$ log-knot splines, $r = 1$, smooth spline phases, declared band, masks, and segment selection. (2) A trials-controlled secondary grid ($\gamma \in \{1,2,3,4\}$, three fixed-$\rho$ values) with Bonferroni correction; all other configuration axes are robustness checks that may only veto, never promote, a candidate. (3) Detection requires \emph{all} of: configuration-matched bootstrap $p < 10^{-3}$ with $n_b \ge 10^4$ (or time-domain-simulation calibration at that level); $\hat\betaeff$ consistent across disjoint segment subsets; null-stream power consistent with $(1-\hat\rho)\Sh(f)$, with $\hat\rho \to 1$ candidates declared GW-indistinguishable; the sign pattern $\mathrm{Re}\,t < 0$ visible in the raw binned cross-spectra, not only in fits; demonstrated injection efficiency $>90\%$ at $\hat\betaeff$; survival of the foreground-inclusive joint fit of Section~\ref{sec:sgwb}; and clean environmental/witness vetoes. (4) Any post-hoc configuration change reclassifies the result as exploratory.
+
+\section{Reference implementation and cost}
+\label{sec:implementation}
+
+The reference implementation (\texttt{qif\_v2.py}, CPU; \texttt{qif\_v2\_cuda.py}, optional CuPy backend --- mirrored but never executed on the development machine, which lacks an NVIDIA GPU) is archived with all validation logs in the public repository~\cite{repo}. The Wishart likelihood is vectorized (batched $3\times3$ Cholesky); one nested pair costs $\sim$73\,s per group at the table configuration, tens of seconds on a laptop CPU at the 64-log-bin configuration, dominated by finite-difference gradients over $\sim$240 parameters. A $n_b = 10^4$ full-refit bootstrap at the table configuration is $O(10^2)$ CPU-hours --- overnight on one multi-core node; analytic Wishart scores (closed form) would remove the $(\mathrm{dim}{+}1)$ finite-difference factor, and generalized-Pareto tail modeling extends the calibrated range to $p \sim 10^{-5}$ with quantified tail-fit uncertainty.
+
+\section{Commissioning plan}
+\label{sec:plan}
+
+Before real-data claims: (i) time-domain end-to-end simulation through the exact Welch pipeline --- validates the Wishart/$m_{\rm eff}$ approximation, bin correlations, and the bootstrap simultaneously ($\sim$6 CPU-hours at the 64-bin configuration; top priority); (ii) frame-level injections with detection-efficiency curves, including full-response injections for the strain reading; (iii) signal-free or CBC-subtracted MDC stretches for false-alarm validation (the ``loudest'' archive cannot provide this); (iv) the joint SGWB-foreground fit of Section~\ref{sec:sgwb}; (v) line-forest robustness with masks and witness constraints; (vi) block-bootstrap and clean-stretch comparisons of the significance calibration; (vii) UL coverage study; (viii) amplitude-calibration nuisances with measured priors; (ix) $p$-value uniformity, injection efficiency, and stability gates as in v0.2, now including the dimension-invariance diagnostic.
+
+\appendix
+
+\section{Post-mortem I: the v0.1 defect}
+\label{app:postmortem1}
+
+v0.1 reported the same LR to seven significant figures across eight independent datasets, negative nested LRs, and bootstrap $p = 1.0000$. Cause: fixed parameter boxes and overflow clips excluded the physical scale of strain data ($\log P \in (-30,30)$ vs.\ a true scale of $\approx -108$; amplitude bounds $(-20,20)$ vs.\ $\approx -100$), so L-BFGS-B pinned every fit at a data-independent corner. Diagnostic rules extracted: identical statistics across independent datasets mean the data are not being consumed; negative nested LR means the optimizer failed; boxes must derive from the data; optimizer effort must be symmetric between hypotheses; uniform best-fit amplitudes across datasets indicate misfit absorption.
+
+\section{Post-mortem II: the v0.2 defects}
+\label{app:postmortem2}
+
+Three independent problems, all exposed within hours by an external referee review that requested (among other things) optimizer diagnostics and basis-stability checks --- both of which v0.2 should have reported and did not.
+
+\textbf{(a) Absolute finite-difference steps.} \texttt{scipy}'s L-BFGS-B approximates gradients with an absolute step $\epsilon \approx 1.5\times10^{-8}$. Applied to environmental-factor coefficients of physical scale $10^{-24}$, the probe step inflates $\mathbf{B}\mathbf{B}^\dagger$ by $\sim$32 orders of magnitude; the ``gradient'' is $\sim$$10^{24}$, every line search fails, and the optimizer exits at iteration zero (\texttt{nit=0}, \texttt{ABNORMAL}) returning the untouched start. Measured on a v0.2 fit: fitted ``PSD'' equal to its flat initialization against data with a $\times$76 dynamic range; per-bin Wishart traces 0.2--7.1 (healthy $\approx 3$); $\sim$4{,}000 log-likelihood units unclaimed relative to a diagonal-perfect fit. All v0.2 LR structure came from the gradient-free 1-D amplitude scan; the joint fits never moved. The exposing signature: LR values byte-identical to 16 digits across spline bases of \emph{different dimension}. In addition, \texttt{scipy}'s default evaluation budget (\texttt{maxfun}=15{,}000) silently truncates a 240-parameter finite-difference fit after $\sim$60 gradient evaluations.
+
+\textbf{(b) Insufficient nested-pair symmetrization.} With working gradients, a single cross-pollination round proved insufficient: the alternative's refit can enter a better basin of the shared nuisance model after the null's last chance, yielding $\Lambda = 19.8$ with $\hat{\Ah}$ at the numerical floor --- structurally spurious. Fixed by iterating cross-pollination to convergence and bounding the final null value by a direct evaluation of the null likelihood at the alternative's nuisance solution, which caps $\Lambda$ at twice the genuine amplitude contribution.
+
+\textbf{(c) Subsampled linear analysis bins.} The v0.2 grid kept every $\sim$250th native Welch bin on a linear grid: 99.6\% of the data discarded and one analysis bin below 100\,Hz. Consequences beyond lost sensitivity: the v0.2 ``outlier'' ($\Lambda = 51.5$) and the ``$8\sigma_F$ injection threshold'' both lived in that single low-frequency bin and did not survive the corrected analysis. Replaced by log-spaced block averaging with correlation-corrected $m_{\rm eff}$ (Section~\ref{sec:likelihood}).
+
+The v0.2 empirical section is withdrawn accordingly; the v0.2 PDF remains in the repository as a record.
+
+\begin{thebibliography}{9}
+
+\bibitem{etmdc} Regimbau, T., et al., \emph{Mock data challenge for the Einstein Gravitational-Wave Telescope}, Phys.\ Rev.\ D \textbf{86}, 122001 (2012). \url{https://doi.org/10.1103/PhysRevD.86.122001}
+
+\bibitem{etdesign} Hild, S., et al., \emph{Data analysis challenges for the Einstein Telescope}, arXiv:0910.0380. \url{https://arxiv.org/abs/0910.0380}
+
+\bibitem{allen} Allen, B., \emph{The stochastic gravity-wave background: sources and detection}, arXiv:gr-qc/9604033. \url{https://arxiv.org/abs/gr-qc/9604033}
+
+\bibitem{romano} Renzini, A., et al., \emph{Stochastic gravitational-wave backgrounds: current detection efforts and future prospects}, arXiv:2107.00129. \url{https://arxiv.org/abs/2107.00129}
+
+\bibitem{ng} Ng, Y.~J., \emph{Quantum foam and quantum gravity phenomenology}, arXiv:gr-qc/0405078. \url{https://arxiv.org/abs/gr-qc/0405078}
+
+\bibitem{amelino} Amelino-Camelia, G., \emph{A phenomenological description of space-time noise in quantum gravity}, arXiv:gr-qc/0104086. \url{https://arxiv.org/abs/gr-qc/0104086}
+
+\bibitem{hogan} Hogan, C., \emph{Holographic noise in interferometers}, arXiv:0905.4803. \url{https://arxiv.org/abs/0905.4803}
+
+\bibitem{schiller} Schiller, S., et al., \emph{Experimental limits for low-frequency space-time fluctuations from ultrastable optical resonators}, arXiv:gr-qc/0401103. \url{https://arxiv.org/abs/gr-qc/0401103}
+
+\bibitem{repo} Da\u{g}, B., \emph{qif-geodesic-noise: reference implementation, data manifest, and validation logs}. \url{https://github.com/bekirdag/qif-geodesic-noise}
+
+\end{thebibliography}
+
+\end{document}
