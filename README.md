@@ -181,6 +181,19 @@ Notes:
 
 ## Findings (v0.2, corrected pipeline)
 
+> **CURRENT (2026-07-03): v0.3.2.** A third referee round produced boundary
+> measurements, no retractions: the sign channel's universal calibration gains a
+> measured finite-m validity boundary and a fit-free **coherence gate** (worst-case
+> tail false rate 0.24 on strongly coherent rank-1 nulls; MDC1 passes the gate
+> everywhere); an isotropic **SGWB also gives Re t < 0** (triangle correlation −1/2),
+> so the sign channel establishes non-instrumental correlated power, not geodesic
+> origin; a joint CBC-foreground amplitude costs **×2.45** in profiled Fisher (no
+> collapse); LR optimization noise is negligible (Λ = 29.7 ± 0.2 at 32 σ_F); UL
+> coverage first check 17/20; all sensitivity curves are labeled **path-template
+> forecasts** (strain-reading forecast provisional pending full-response
+> injections). Numbers: `test-runs/rerun_results_v032.json`; answers:
+> `docs/answers_to_questions_v0.3.1.md`.
+
 > **SUPERSEDED AGAIN (2026-07-03) — see v0.3.1:** a second referee round exposed an
 > optimizer **conditioning stall** (raw parameters span ~26 orders of magnitude;
 > fits stalled hundreds of lnL units short of their optima even with exact

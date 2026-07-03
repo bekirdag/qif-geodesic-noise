@@ -797,7 +797,12 @@ def sign_channel_pvalue(
     """
     rng = np.random.default_rng(seed)
     T_obs, _ = sign_channel_stat(S_hat, m_eff)
-    m_int = np.maximum(np.round(np.asarray(m_eff, dtype=float)), 1.0)
+    # fractional m_eff is passed through directly: the Bartlett construction
+    # generalizes to non-integer sample counts (Gamma shapes m, m-1, m-2),
+    # matching the fractional-Wishart moments the m_eff prescription implies.
+    # Rounding (the previous behavior) biases the null width by O(1/2m) per
+    # bin -- negligible at m >~ 70 but wrong in principle.
+    m_frac = np.maximum(np.asarray(m_eff, dtype=float), 1.0)
     Sig = np.asarray(Sigma_null, dtype=complex)
     Sig = 0.5 * (Sig + np.conjugate(np.transpose(Sig, (0, 2, 1))))
     if diagonalize_null:
@@ -808,7 +813,7 @@ def sign_channel_pvalue(
     chol = np.linalg.cholesky(Sig)
     T_boot = np.empty(n_boot)
     for b in range(n_boot):
-        S_b = sample_wishart_bartlett(chol, m_int, rng)
+        S_b = sample_wishart_bartlett(chol, m_frac, rng)
         T_boot[b], _ = sign_channel_stat(S_b, m_eff)
     p = float((np.sum(T_boot <= T_obs) + 1.0) / (n_boot + 1.0))
     return T_obs, p, T_boot

@@ -182,3 +182,40 @@ T_sign = sum_k m_k^{3/2} Re(t_k)/(S11 S22 S33)_k with t = S12 S23 S31.
 - qif_v2.py: loglike_et_qif_grad, scaled optimization, sign_channel_stat,
   sign_channel_pvalue, sample_wishart_bartlett.
 - scripts/check_analytic_scores.py: gradient regression test.
+
+---
+
+# 2026-07-03 (later): v0.3.2 third referee round — boundaries measured, no retraction
+
+Results: test-runs/rerun_results_v032.json (suite R1-R10). Answers:
+docs/answers_to_questions_v0.3.1.md. Paper: v0.3.2 (24 pp).
+
+Key measurements:
+- R1 Lambda reproducibility (fixed data, 8 multistart seeds): 32 sigma_F gives
+  Lambda = 29.7 +/- 0.2 (opt noise on Lambda ~150x below signal); null draw
+  {~0 x7, 15.6 x1} = the Davies tail, bootstrap-calibrated.
+- R2 joint CBC-foreground Fisher: sigma_prof 2.01e-48 -> 4.93e-48 (x2.45, NOT
+  a collapse). Foreground ORF fixed at -1/2, index fixed.
+- R3 sign-channel conservativeness scan (200 random rank-1 configs): mean
+  false rate 0.030 but WORST 0.24 @ nominal 0.05 (coherent factor, m=1e3) —
+  the blanket "conservative for the class" claim was wrong in the tails
+  (mean-conservative theorem proven via Isserlis; variance inflation breaks
+  the tails). Production fix: fit-free coherence gate (|gamma|^2 at 1/m floor)
+  gates the universal p-value; MDC1 passes everywhere.
+- R6 fmin sweep 5-30 Hz: sigma_F x1.8 end-to-end; Asimov LR(64x) 49-78 —
+  cutoff-robust. Median-information frequency 22 Hz.
+- R7 Fisher info above 1 kHz: 3.7e-6 — delay corrections irrelevant.
+- R8 multi-line MC: false rate 0.000 (rank-1 majority pushes mean positive).
+- R9 UL coverage at A_true = 7.8e-47: 17/20 (0.85, CI [0.62,0.97]); coarse
+  grid biases low; definitive coverage study = commissioning gate.
+- R10 ET triangle DC correlation coefficient = -1/2 exactly (cos 4*120deg) →
+  an SGWB ALSO gives Re t < 0. The sign channel detects "non-instrumental
+  correlated power", not geodesic origin; separation = null stream + index.
+
+Paper changes: forecasts labeled PATH-TEMPLATE (strain-reading forecast
+provisional pending full-response injections — the referee's strongest point);
+per-path terminology fixed at Eq. (1); Fig 4 regenerated with the calibrated
+Lambda_95 threshold (was inconsistently labeled 2.71); fractional m_eff passed
+directly to the Bartlett calibration (code fix in sign_channel_pvalue);
+reporting policy (beta primary, fixed-rho family); numerical witness-rank
+criterion; two-channel effective threshold stated (sign channel sets it).
