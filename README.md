@@ -181,15 +181,29 @@ Notes:
 
 ## Findings (v0.2, corrected pipeline)
 
+> **SUPERSEDED AGAIN (2026-07-03) — see v0.3.1:** a second referee round exposed an
+> optimizer **conditioning stall** (raw parameters span ~26 orders of magnitude;
+> fits stalled hundreds of lnL units short of their optima even with exact
+> gradients). With closed-form analytic Wishart scores **and** scale-normalized
+> optimization variables, the v0.3 "no detection power / complete absorption"
+> finding is **retracted**: the LR test detects injections above ~30 sigma_F with
+> unbiased amplitude recovery, the noiseless Asimov ladder confirms the threshold,
+> and the profile upper limit becomes statistics-limited at
+> **UL95(A_h) = 7.8e-47 Hz^-1** (128 s, rho=0.5, per-path convention) — 10x weaker
+> than the v0.3 "conservative" limit, which stalled fits had made anti-conservative.
+> v0.3.1 also adds a fit-free, convention-invariant **sign-channel statistic** with
+> a universal conservative calibration (50% detection at ~84 sigma_F, immune to
+> nuisance absorption), fixes a normalization inconsistency in the derivation
+> (A_h is the per-path amplitude), and documents everything in
+> **`docs/et_geodesic_noise_paper_v0.3.pdf`** (v0.3.1, 21 pp), Appendix "Revision
+> record III". Definitive numbers: `test-runs/rerun_results_v031.json`; narrative:
+> `test-runs/20260702_eps_bug_postmortem_and_rerun.md`.
+
 > **SUPERSEDED (2026-07-02, later the same day) — see v0.3:** answering the referee
 > questions in `docs/quesitons.md` exposed three further pipeline defects (absolute
 > finite-difference steps vs. 1e-24-scale parameters; insufficient nested-fit
 > symmetrization; a bin layout that discarded 99.6% of the spectral data). All v0.2
-> numbers below are superseded by **`docs/et_geodesic_noise_paper_v0.3.pdf`**, whose
-> central finding is that the unconstrained-nuisance LR search has no measurable
-> detection power against the template (injections to 256 sigma_F fully absorbed;
-> verified honest) and functions as an upper-limit machine
-> (conservative UL95 ~ 7.7e-48 Hz^-1 at 128 s). Full record:
+> numbers below are superseded. Full record:
 > `test-runs/20260702_eps_bug_postmortem_and_rerun.md` and
 > `docs/answers_to_questions_v0.2.md`.
 

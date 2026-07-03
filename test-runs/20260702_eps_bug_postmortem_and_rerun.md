@@ -96,3 +96,89 @@ span 4.7 e-folds tracking the data, per-bin traces 2.4-3.1, ~10 s per env fit.
    Re(S12 S23 S31) < 0, which no diagonal + rank-1 + phase model can produce
    (theorem, numerically verified), and which dies at rank 2 (Ledermann bound:
    diag + rank-2 reproduces ANY 3x3 Hermitian covariance).
+
+---
+
+# 2026-07-03: v0.3.1 second referee round — conditioning stall found; "no detection power" RETRACTED
+
+Prompted by a second set of referee questions on v0.3. Full results:
+`test-runs/rerun_results_v031.json` (produced by the analytic-score suite).
+
+## Defect 6: optimizer conditioning stall (the one that mattered scientifically)
+
+Raw parameters span ~26 orders of magnitude (log-PSDs ~ -108, B coefficients
+~1e-24, phases ~1). Against L-BFGS-B's identity initial Hessian, descent from
+any distant start stalls hundreds of lnL units short of the optimum EVEN WITH
+exact analytic gradients. Fix: optimize in scaled variables x = s*y (s = 1 for
+log/logit/phase blocks, s = B_scale for B blocks). Measured on the 128-bin env
+fit: +642 lnL units recovered; 4/5 independent seeds land on the identical
+optimum to 4 decimals; restart scatter collapses 50-80 -> ~4-7 units.
+
+Scientific consequence: the v0.3 "complete absorption / no detection power"
+finding DOES NOT SURVIVE. Both hypotheses' fits had stalled symmetrically and
+the guarded pairing reported the difference of two equally-unconverged optima
+as zero. Corrected measurements (BBH_snr_306, 64 s / 64 log bins, rho=0.5):
+
+- LR injection ladder (16 draws/amplitude): turn-on ~30 sigma_F; med Lambda =
+  10.0 / 57.0 / 159.7 / 386.0 at 32/64/128/256 sigma_F; recovered amplitudes
+  unbiased (ratio 0.9-1.2) above threshold.
+- Null LR tail is Davies-inflated (free rho(f) spline): null draws reach
+  Lambda = 22-23; bootstrap n=100 gives Lambda_95 = 4.53, boundary mass 0.52
+  (was 1.00 with stalled fits — another signature). Nominal 2.71 cuts invalid.
+- Asimov (noiseless) ladder through the SAME evaluator: Lambda_Asimov =
+  0.006 / 0.17 / 49.3 / 393.6 / 1345 at 4/16/64/256/1024 sigma_F; noiseless
+  crossing ~31 sigma_F, consistent with the noisy ladder. Absorption is
+  98-99.9% of available deviance — overwhelming but NOT total.
+- Profile UL @128s: profile now resolvable; long absorption plateau
+  (ridge-and-dip <= ~9 units from basin discovery) then a steep wall;
+  UL95(A_h) = 7.8e-47 Hz^-1 (per-path, rho=0.5). This is 10x WEAKER than the
+  v0.3 "conservative" 7.7e-48 — the v0.3 stalled profile fits could not
+  perform legitimate absorption of a fixed template, so the old limit was
+  actually anti-conservative by ~10x.
+- All 8 baseline groups remain null in both channels (LR <= 0.08; sign p in
+  [0.14, 0.99]).
+
+## Defect 7 (methodological): jitter-evaluator mismatch in absolute comparisons
+
+The likelihood's diagonal jitter guard (1e-9 * peak PSD per bin) contributes
+an O(100)-unit offset at lnL ~ 1e8 vs jitterless closed-form evaluations
+(measured: 286.0 exactly reproduced by adding the jitter to the stack).
+An early Asimov run mixed evaluators and produced an impossible result (a fit
+landing ~600 units below its own warm start), caught by that internal bound.
+Rule: every absolute lnL comparison must flow through the production evaluator,
+including the generation of Asimov data (truth must include the jitter).
+
+## New: sign-channel statistic (fit-free, gauge/convention-invariant)
+
+T_sign = sum_k m_k^{3/2} Re(t_k)/(S11 S22 S33)_k with t = S12 S23 S31.
+- Null moments verified: E[r] = 1/m^2 (+1%), sd(r) ~ 0.75 m^{-3/2}.
+- Calibration is UNIVERSAL (diagonal-null distribution depends only on {m_k},
+  by scale invariance of r) and conservative under the whole diag+rank-1+phase
+  class (the sign theorem). Plug-in calibration under the FITTED env model is
+  anti-conservative (measured false rate 0.56 at nominal 0.05) because the
+  fitted rank-1 factor soaks sampling coherence into positively-biased-t
+  structure. With the universal calibration: false rate 0.06 at null (n=16).
+- Power: 0.19 / 1.00 / 1.00 at 64/128/256 sigma_F; 50% at ~84 sigma_F.
+  ~3x slower than the corrected LR, but immune to nuisance absorption and
+  optimizer misbehavior. Line robustness: a rank-1 line CANNOT fake Re t < 0
+  (measured false rate 0.02 vs 0.45 clean); rank-2 lines give the predicted
+  ~17%.
+- Bartlett-decomposition Wishart sampler added (exact, O(1) per bin at any m).
+
+## Also fixed
+
+- Paper derivation normalization: spurious 1/2 in the v0.3 template equation;
+  A_h is the PER-PATH amplitude; per-channel signal PSD = 2 A_h f^-gamma.
+  Code was consistent throughout; no number changes.
+- Analytic Wishart scores (loglike_et_qif_grad): verified against central FD
+  (residual scales exactly as the FD probe's own f*eps_mach/h floor);
+  ~13x faster; CUDA variant still on scale-matched FD (flagged, port pending).
+- fisher @64s: naive 1.68e-48, profiled 2.01e-48 (x1.20, pinv gauge handling).
+
+## Deliverables
+
+- Paper v0.3.1: docs/et_geodesic_noise_paper_v0.3.tex/.pdf (21 pp), 4 figures
+  regenerated.
+- qif_v2.py: loglike_et_qif_grad, scaled optimization, sign_channel_stat,
+  sign_channel_pvalue, sample_wishart_bartlett.
+- scripts/check_analytic_scores.py: gradient regression test.

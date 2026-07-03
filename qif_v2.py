@@ -416,6 +416,248 @@ def loglike_et_qif(
     return lnL
 
 
+def loglike_et_qif_grad(
+    alpha_val: float,
+    rho_coeffs: np.ndarray,
+    P_coeffs: np.ndarray,
+    B_real_coeffs: np.ndarray,
+    B_imag_coeffs: np.ndarray,
+    phi_coeffs: np.ndarray,
+    S_hat: np.ndarray,
+    m_eff: np.ndarray,
+    freqs: np.ndarray,
+    f_min: np.ndarray,
+    f_max: np.ndarray,
+    knots: np.ndarray,
+    L: float,
+    c0: float,
+    lP: float,
+    gamma: float = 2.0,
+    use_planck_scale: bool = False,
+    T_eff_sq: np.ndarray | None = None,
+    T_over_f2_avg: np.ndarray | None = None,
+    T_over_fgamma_avg: np.ndarray | None = None,
+    P_floor: np.ndarray | None = None,
+    B_clip: np.ndarray | None = None,
+    eps: float = 1e-9,
+    jitter_floor: float = 1e-50,
+    clip_logP: float = 700.0,
+    clip_logit_rho: float = 50.0,
+    clip_log_alpha: float = 700.0,
+    B_elem_clip_factor: float = 1e6,
+    Phi: np.ndarray | None = None,
+) -> tuple[float, dict]:
+    """
+    Log-likelihood AND closed-form analytic gradient w.r.t. all spline
+    coefficients and log-alpha.
+
+    Finite-difference gradients of a lnL ~ 1e8 surface carry cancellation
+    noise of order f*eps_mach/h ~ 0.4 per component; that noise floor is what
+    limited the v0.3 profile upper limit. The Wishart score is available in
+    closed form:
+
+        d lnL / d theta = sum_k tr[ W_k  dSigma_k/dtheta ],
+        W_k = m_k ( Sigma_k^{-1} S_hat_k Sigma_k^{-1} - Sigma_k^{-1} ),
+
+    chained through the model construction (splines, sigmoid/exp links,
+    rank-r factor, phase congruence, jitter). Clips and floors contribute
+    zero gradient where active (they are overflow guards, not priors).
+
+    The forward pass mirrors loglike_et_qif operation-for-operation, so the
+    returned lnL agrees with it to double precision.
+
+    Returns: (lnL, grads) with grads keyed like the params dict; grads are
+    d lnL/d(coefficient) in the same shapes as the coefficient arrays, plus
+    the scalar "alpha_val" entry (zero when alpha_val = -inf).
+    """
+    Nf = S_hat.shape[0]
+    n_coeff = P_coeffs.shape[0]
+    r = B_real_coeffs.shape[2]
+
+    def _zero_grads() -> dict:
+        return {
+            "alpha_val": 0.0,
+            "rho_coeffs": np.zeros((n_coeff, 1)),
+            "P_coeffs": np.zeros((n_coeff, 3)),
+            "B_real_coeffs": np.zeros((n_coeff, 3, r)),
+            "B_imag_coeffs": np.zeros((n_coeff, 3, r)),
+            "phi_coeffs": np.zeros((n_coeff, 2)),
+        }
+
+    # --- splines (forward identical to loglike_et_qif) ---
+    P_log = evaluate_spline(P_coeffs, knots, freqs)
+    if np.any(~np.isfinite(P_log)):
+        return -np.inf, _zero_grads()
+    P_exp = np.exp(np.clip(P_log, -clip_logP, clip_logP))
+    if P_floor is not None:
+        P = np.maximum(P_exp, P_floor)
+    else:
+        P = np.maximum(P_exp, jitter_floor)
+    dP_dlog = np.where((np.abs(P_log) < clip_logP) & (P_exp >= P), P_exp, 0.0)
+
+    rho_logit = evaluate_spline(rho_coeffs, knots, freqs).reshape(-1)
+    if np.any(~np.isfinite(rho_logit)):
+        return -np.inf, _zero_grads()
+    rho_pre = 1.0 / (1.0 + np.exp(-np.clip(rho_logit, -clip_logit_rho, clip_logit_rho)))
+    rho = np.clip(rho_pre, 1e-6, 1.0 - 1e-6)
+    drho_dlogit = np.where(
+        (np.abs(rho_logit) < clip_logit_rho) & (rho_pre > 1e-6) & (rho_pre < 1.0 - 1e-6),
+        rho_pre * (1.0 - rho_pre), 0.0)
+
+    B_real = evaluate_spline(B_real_coeffs, knots, freqs)
+    B_imag = evaluate_spline(B_imag_coeffs, knots, freqs)
+    if np.any(~np.isfinite(B_real)) or np.any(~np.isfinite(B_imag)):
+        return -np.inf, _zero_grads()
+
+    phi_23 = evaluate_spline(phi_coeffs, knots, freqs)
+    if np.any(~np.isfinite(phi_23)):
+        return -np.inf, _zero_grads()
+    phi_23 = wrap_phase(phi_23)
+
+    if np.isneginf(alpha_val):
+        alpha = 0.0
+        alpha_active = False
+    else:
+        alpha = float(np.exp(np.clip(alpha_val, -clip_log_alpha, clip_log_alpha)))
+        alpha_active = abs(alpha_val) < clip_log_alpha
+
+    if alpha > 0:
+        S_path = qif_path_psd_binavg(
+            alpha, c0, lP, L, f_min, f_max,
+            T_eff_sq=T_eff_sq, T_over_f2_avg=T_over_f2_avg,
+            T_over_fgamma_avg=T_over_fgamma_avg,
+            gamma=gamma, use_planck_scale=use_planck_scale)
+    else:
+        S_path = np.zeros(Nf, dtype=float)
+
+    # elementwise clip (overflow guard) with gradient mask
+    if B_clip is not None:
+        B_elem_clip = B_elem_clip_factor * np.sqrt(np.maximum(B_clip, jitter_floor))
+        B_elem_clip = B_elem_clip.reshape(Nf, 1, 1)
+        mask_Br = (np.abs(B_real) < B_elem_clip).astype(float)
+        mask_Bi = (np.abs(B_imag) < B_elem_clip).astype(float)
+        B_real = np.clip(B_real, -B_elem_clip, B_elem_clip)
+        B_imag = np.clip(B_imag, -B_elem_clip, B_elem_clip)
+    else:
+        mask_Br = np.ones_like(B_real)
+        mask_Bi = np.ones_like(B_imag)
+
+    eye3 = np.eye(3, dtype=complex)
+    B = (B_real + 1j * B_imag).astype(complex)                  # (Nf, 3, r)
+    scale = np.ones(Nf)
+    need = np.zeros(Nf, dtype=bool)
+    dmax = np.zeros(Nf)
+    jmax_B = np.zeros(Nf, dtype=int)
+    if B_clip is not None:
+        diag_B = np.sum(np.abs(B) ** 2, axis=2)                 # (Nf, 3)
+        dmax = np.max(diag_B, axis=1)
+        jmax_B = np.argmax(diag_B, axis=1)
+        limit = np.asarray(B_clip, dtype=float)
+        need = np.isfinite(dmax) & np.isfinite(limit) & (dmax > limit) & (dmax > 0.0) & (limit > 0.0)
+        scale[need] = np.sqrt(limit[need] / dmax[need])
+    Bs = B * scale[:, None, None]
+    Sigma_env = Bs @ np.conjugate(np.transpose(Bs, (0, 2, 1)))
+
+    Sigma = Sigma_env.copy()
+    Sigma[:, 0, 0] += P[:, 0]
+    Sigma[:, 1, 1] += P[:, 1]
+    Sigma[:, 2, 2] += P[:, 2]
+
+    if alpha > 0:
+        J_off = np.ones((3, 3)) - np.eye(3)
+        M = 2.0 * np.eye(3)[None, :, :] - rho[:, None, None] * J_off[None, :, :]
+        Sigma = Sigma + (S_path[:, None, None] * M).astype(complex)
+
+    g = np.stack([np.ones(Nf, dtype=complex),
+                  np.exp(1j * phi_23[:, 0]),
+                  np.exp(1j * phi_23[:, 1])], axis=1)           # (Nf, 3)
+    Sigma = Sigma * (g[:, :, None] * np.conjugate(g[:, None, :]))
+
+    Sigma = 0.5 * (Sigma + np.conjugate(np.transpose(Sigma, (0, 2, 1))))
+    Sigma_ph = Sigma.copy()                                     # pre-jitter, post-phase
+    S_sym = 0.5 * (S_hat + np.conjugate(np.transpose(S_hat, (0, 2, 1))))
+
+    diag_now = np.real(np.diagonal(Sigma, axis1=1, axis2=2))
+    max_diag = np.max(diag_now, axis=1)
+    jmax_d = np.argmax(diag_now, axis=1)
+    Sigma = Sigma + (eps * max_diag + jitter_floor)[:, None, None] * eye3[None, :, :]
+
+    use = (m_eff > 0) & np.all(np.isfinite(S_sym.reshape(Nf, -1)), axis=1)
+    if not np.any(use):
+        return 0.0, _zero_grads()
+    idx = np.where(use)[0]
+    Sigma_u = Sigma[idx]
+    S_u = S_sym[idx]
+    m_u = m_eff[idx]
+
+    try:
+        chol = np.linalg.cholesky(Sigma_u)
+    except np.linalg.LinAlgError:
+        return -np.inf, _zero_grads()
+
+    diag_chol = np.real(np.diagonal(chol, axis1=1, axis2=2))
+    logdet = 2.0 * np.sum(np.log(np.maximum(diag_chol, 1e-300)), axis=1)
+    Sigma_inv_S = np.linalg.solve(Sigma_u, S_u)
+    tr = np.real(np.trace(Sigma_inv_S, axis1=1, axis2=2))
+    lnL = -float(np.sum(m_u * (logdet + tr)))
+
+    # ---- analytic score ----
+    Sigma_inv = np.linalg.inv(Sigma_u)
+    W_u = m_u[:, None, None] * (Sigma_inv @ S_u @ Sigma_inv - Sigma_inv)
+    W = np.zeros((Nf, 3, 3), dtype=complex)
+    W[idx] = W_u
+
+    # phases: d lnL/d phi_a = 2 Im[(W Sigma_ph)_aa]   (jitter is phase-invariant)
+    WSph = W @ Sigma_ph
+    dphi = 2.0 * np.stack([np.imag(WSph[:, 1, 1]), np.imag(WSph[:, 2, 2])], axis=1)
+
+    # inner-parameter effective weight: G~ = D^H W D, plus the jitter chain
+    # eps * tr(W) on the argmax-diagonal entry.
+    Gt = W * (np.conjugate(g)[:, :, None] * g[:, None, :])
+    trW = np.real(np.trace(W, axis1=1, axis2=2))
+    G_eff = Gt.copy()
+    G_eff[np.arange(Nf), jmax_d, jmax_d] += eps * trW
+
+    # instrument PSDs (log parameterization)
+    gP = np.real(np.diagonal(G_eff, axis1=1, axis2=2)) * dP_dlog        # (Nf, 3)
+
+    # rho and alpha
+    if alpha > 0:
+        trG = np.real(np.trace(G_eff, axis1=1, axis2=2))
+        off_sum = np.real(np.sum(G_eff, axis=(1, 2))) - trG
+        grho = -S_path * off_sum * drho_dlogit
+        galpha = float(np.sum(S_path * (2.0 * trG - rho * off_sum))) if alpha_active else 0.0
+    else:
+        grho = np.zeros(Nf)
+        galpha = 0.0
+
+    # environmental factor: Sigma_env = (sB)(sB)^H with s the rescale guard
+    GB = G_eff @ Bs                                                     # (Nf, 3, r)
+    gBr = 2.0 * scale[:, None, None] * np.real(GB)
+    gBi = 2.0 * scale[:, None, None] * np.imag(GB)
+    if np.any(need):
+        t0 = np.real(np.einsum('kij,kji->k', G_eff, Sigma_env))
+        for k in np.where(need)[0]:
+            j = jmax_B[k]
+            gBr[k, j, :] += t0[k] * (-2.0 * np.real(B[k, j, :]) / dmax[k])
+            gBi[k, j, :] += t0[k] * (-2.0 * np.imag(B[k, j, :]) / dmax[k])
+    gBr *= mask_Br
+    gBi *= mask_Bi
+
+    # chain through the B-spline design matrix
+    if Phi is None:
+        Phi = _spline_design_matrix(knots, freqs, n_coeff)
+    grads = {
+        "alpha_val": galpha,
+        "rho_coeffs": (Phi.T @ grho).reshape(n_coeff, 1),
+        "P_coeffs": Phi.T @ gP,
+        "B_real_coeffs": np.einsum('kn,kjl->njl', Phi, gBr),
+        "B_imag_coeffs": np.einsum('kn,kjl->njl', Phi, gBi),
+        "phi_coeffs": Phi.T @ dphi,
+    }
+    return lnL, grads
+
+
 # ---------------------------
 # Bootstrap primitives (moment-matching for fractional m_eff)
 # ---------------------------
@@ -457,6 +699,119 @@ def sample_covariance_from_sigma(Sigma: np.ndarray, m_star: int, rng: np.random.
     y = Lc @ z
     S = (y @ y.conj().T) / float(m_star)
     return hermitize(S)
+
+
+# ---------------------------
+# Sign-channel statistic (gauge-invariant, fit-free)
+# ---------------------------
+
+def sign_channel_stat(S_hat: np.ndarray, m_eff: np.ndarray) -> tuple[float, np.ndarray]:
+    """
+    Fit-free detection statistic built on the gauge-invariant triple product
+        t(f) = S12(f) S23(f) S31(f).
+
+    For any diagonal + rank-1 + phase-calibration model covariance,
+    Re t >= 0 (identifiability theorem); the geodesic template gives
+    Re t = -(rho S_path)^3 < 0. The statistic is
+
+        T = sum_k m_k^{3/2} r_k,   r_k = Re t_k / (S11 S22 S33)_k,
+
+    where r_k is the normalized triple coherence (dimensionless) and the
+    m^{3/2} weight equalizes per-bin null variance (each off-diagonal
+    coherence fluctuates as 1/sqrt(m), so r_k ~ m^{-3/2} under the null).
+
+    t is invariant under per-channel phases AND per-channel sign flips
+    (each channel enters the product exactly twice), so T does not depend
+    on the Michelson arm-orientation convention of the input channels.
+
+    Returns (T, r) with r the per-bin normalized triple coherence
+    (NaN on excluded bins).
+    """
+    Nf = S_hat.shape[0]
+    S_sym = 0.5 * (S_hat + np.conjugate(np.transpose(S_hat, (0, 2, 1))))
+    d = np.real(S_sym[:, 0, 0] * S_sym[:, 1, 1] * S_sym[:, 2, 2])
+    t = S_sym[:, 0, 1] * S_sym[:, 1, 2] * S_sym[:, 2, 0]
+    use = (m_eff > 0) & np.all(np.isfinite(S_sym.reshape(Nf, -1)), axis=1) & (d > 0)
+    r = np.full(Nf, np.nan)
+    r[use] = np.real(t[use]) / d[use]
+    T = float(np.sum(np.asarray(m_eff, dtype=float)[use] ** 1.5 * r[use]))
+    return T, r
+
+
+def sample_wishart_bartlett(chol_stack: np.ndarray, m_int: np.ndarray,
+                            rng: np.random.Generator) -> np.ndarray:
+    """
+    Exact complex-Wishart sample covariances S ~ (1/m) CW_3(m, Sigma) for a
+    stack of bins, via the Bartlett decomposition: O(1) per bin regardless
+    of m (direct outer-product sampling costs O(m) and is prohibitive at the
+    m_eff ~ 1e3 of high-frequency log-averaged bins).
+
+    chol_stack: (Nf, 3, 3) Cholesky factors of the Sigma stack.
+    m_int:      (Nf,) integer sample counts (>= 1).
+
+    S = L (A A^H / m) L^H with A lower-triangular, |A_jj|^2 ~ Gamma(m-j, 1)
+    (complex Wishart) and A_ij ~ CN(0, 1) for i > j.
+    """
+    Nf = chol_stack.shape[0]
+    m = np.asarray(m_int, dtype=float)
+    A = np.zeros((Nf, 3, 3), dtype=complex)
+    for j in range(3):
+        # complex Wishart: squared diagonal ~ Gamma(m - j, 1)
+        shape = np.maximum(m - j, 1e-8)
+        A[:, j, j] = np.sqrt(rng.gamma(shape=shape, scale=1.0))
+        for i in range(j + 1, 3):
+            A[:, i, j] = (rng.standard_normal(Nf) + 1j * rng.standard_normal(Nf)) / np.sqrt(2.0)
+    LA = chol_stack @ A
+    S = (LA @ np.conjugate(np.transpose(LA, (0, 2, 1)))) / m[:, None, None]
+    return S
+
+
+def sign_channel_pvalue(
+    S_hat: np.ndarray,
+    m_eff: np.ndarray,
+    Sigma_null: np.ndarray,
+    n_boot: int = 400,
+    seed: int | None = None,
+    diagonalize_null: bool = True,
+) -> tuple[float, float, np.ndarray]:
+    """
+    One-sided p-value of the sign-channel statistic against a parametric
+    bootstrap under a null model stack Sigma_null (normally the fitted
+    H_env covariance): p = P(T* <= T_obs). Small p = the data's triple
+    product is more negative than the environmental model class can
+    produce.
+
+    diagonalize_null (default True): calibrate under the DIAGONAL of the
+    fitted null rather than the full fitted covariance. The fitted rank-1
+    factor soaks up the draw's own off-diagonal sampling noise, and any
+    diag+rank-1 structure biases the model-level triple product positive
+    (the sign theorem), so a plug-in calibration under the full fitted
+    model shifts the bootstrap distribution positive and is
+    anti-conservative (measured: false-detection rate 0.56 at nominal 0.05
+    on true-null draws). Under the diagonal null the calibration is exact
+    for independent channels and, by the same theorem, conservative in the
+    presence of any genuine admissible environmental coherence (which can
+    only push the observed statistic positive, away from the signal side).
+
+    Returns (T_obs, p, T_boot).
+    """
+    rng = np.random.default_rng(seed)
+    T_obs, _ = sign_channel_stat(S_hat, m_eff)
+    m_int = np.maximum(np.round(np.asarray(m_eff, dtype=float)), 1.0)
+    Sig = np.asarray(Sigma_null, dtype=complex)
+    Sig = 0.5 * (Sig + np.conjugate(np.transpose(Sig, (0, 2, 1))))
+    if diagonalize_null:
+        d = np.real(np.diagonal(Sig, axis1=1, axis2=2))
+        Sig = d[:, :, None] * np.eye(3)[None, :, :].astype(complex)
+    max_diag = np.max(np.real(np.diagonal(Sig, axis1=1, axis2=2)), axis=1)
+    Sig = Sig + (1e-12 * max_diag + 1e-50)[:, None, None] * np.eye(3)[None, :, :]
+    chol = np.linalg.cholesky(Sig)
+    T_boot = np.empty(n_boot)
+    for b in range(n_boot):
+        S_b = sample_wishart_bartlett(chol, m_int, rng)
+        T_boot[b], _ = sign_channel_stat(S_b, m_eff)
+    p = float((np.sum(T_boot <= T_obs) + 1.0) / (n_boot + 1.0))
+    return T_obs, p, T_boot
 
 
 # ---------------------------
@@ -1003,6 +1358,7 @@ def fit_model(
     n_starts: int = 3,
     seed: int | None = None,
     init_params: dict | None = None,
+    use_grad: bool = True,
 ) -> tuple[dict, float]:
     rho_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs = _build_initial_coeffs(
         S_hat, n_coeff, r, freqs=freqs, knots=knots)
@@ -1079,6 +1435,43 @@ def fit_model(
         )
         return -float(lnL)
 
+    # Analytic-score objective (closed-form Wishart gradient). This removes
+    # the finite-difference cancellation-noise floor (~0.4/component at
+    # lnL ~ 1e8) that limited profile-likelihood resolution in v0.3.
+    #
+    # The fit runs in SCALED variables x = s * y (s = 1 for log/logit/phase
+    # blocks, s = B_scale for the environmental factor blocks). Raw parameters
+    # span ~26 orders of magnitude; against L-BFGS-B's identity initial
+    # Hessian that conditioning makes descent from distant starts crawl.
+    Phi_mat = _spline_design_matrix(knots, freqs, n_coeff) if use_grad else None
+    s_parts: list[np.ndarray] = []
+    if fit_alpha:
+        s_parts.append(np.ones(1))
+    s_parts.append(np.ones(n_coeff))                                # rho logits
+    s_parts.append(np.ones(n_coeff * 3))                            # log P
+    s_parts.append(np.full(n_coeff * 3 * r, max(B_scale, 1e-300)))  # B real
+    s_parts.append(np.full(n_coeff * 3 * r, max(B_scale, 1e-300)))  # B imag
+    if fit_phi:
+        s_parts.append(np.ones(n_coeff * 2))                        # phases
+    s_vec = np.concatenate(s_parts)
+
+    def objective_with_grad_scaled(y: np.ndarray) -> tuple[float, np.ndarray]:
+        x = s_vec * y
+        alpha_val_i, rho_c, P_c, B_r, B_i, phi_c = _unpack_params(x, n_coeff, r, fit_alpha, fit_phi)
+        lnL, gd = loglike_et_qif_grad(
+            alpha_val_i, rho_c, P_c, B_r, B_i, phi_c,
+            S_hat, m_eff, freqs, f_min, f_max, knots,
+            L=L, c0=c0, lP=lP, gamma=gamma, use_planck_scale=use_planck_scale,
+            T_over_f2_avg=T_over_f2_avg, T_over_fgamma_avg=T_over_fgamma_avg,
+            P_floor=P_floor, B_clip=B_clip, Phi=Phi_mat,
+        )
+        if not np.isfinite(lnL):
+            return np.inf, np.zeros_like(y)
+        grad = _pack_params(gd["alpha_val"], gd["rho_coeffs"], gd["P_coeffs"],
+                            gd["B_real_coeffs"], gd["B_imag_coeffs"], gd["phi_coeffs"],
+                            fit_alpha, fit_phi)
+        return -float(lnL), -(grad * s_vec)
+
     # When fitting alpha, seed the signal start with a coarse 1-D profile scan
     # over log-alpha (nuisance parameters held at the warm-start values). In
     # log-parameterization the numerical gradient w.r.t. alpha_val vanishes at
@@ -1120,12 +1513,26 @@ def fit_model(
             x0 = _pack_params(alpha_j, rho_j, P_j, B_rj, B_ij, phi_j, fit_alpha, fit_phi)
 
         x0 = _clip_to_bounds(x0, bounds)
-        # maxfun must accommodate finite-difference gradients: each L-BFGS-B
-        # iteration costs ~(dim+1) evaluations; scipy's default maxfun=15000
-        # silently truncates a 240-dim fit after ~60 gradient evaluations.
-        res = minimize(objective, x0, method="L-BFGS-B", bounds=bounds,
-                       options={"maxiter": max_iter, "eps": eps_vec,
-                                "maxfun": max(15000, 2 * max_iter * (len(x0) + 1))})
+        if use_grad:
+            # With analytic scores each iteration costs O(1) evaluations and
+            # the convergence test can be much tighter than the ~0.4-unit
+            # finite-difference noise floor allows (factr=1e4: relative ftol
+            # ~2e-12, absolute ~4e-4 at lnL ~ 1e8).
+            y0 = x0 / s_vec
+            bounds_y = [(lo / s, hi / s) for (lo, hi), s in zip(bounds, s_vec)]
+            res = minimize(objective_with_grad_scaled, y0, method="L-BFGS-B",
+                           jac=True, bounds=bounds_y,
+                           options={"maxiter": max_iter,
+                                    "maxfun": max(15000, 20 * max_iter),
+                                    "ftol": 1e4 * np.finfo(float).eps})
+            res.x = s_vec * res.x
+        else:
+            # maxfun must accommodate finite-difference gradients: each L-BFGS-B
+            # iteration costs ~(dim+1) evaluations; scipy's default maxfun=15000
+            # silently truncates a 240-dim fit after ~60 gradient evaluations.
+            res = minimize(objective, x0, method="L-BFGS-B", bounds=bounds,
+                           options={"maxiter": max_iter, "eps": eps_vec,
+                                    "maxfun": max(15000, 2 * max_iter * (len(x0) + 1))})
         if res.fun < best_fun:
             best_fun = float(res.fun)
             best_res = res
@@ -1167,6 +1574,7 @@ def fit_nested_pair(
     max_iter: int = 500,
     n_starts: int = 2,
     seed: int | None = None,
+    use_grad: bool = True,
 ) -> tuple[dict, float, dict, float]:
     """
     Fit the nested pair (H_env, H_env+signal) with symmetric optimization effort.
@@ -1180,7 +1588,7 @@ def fit_nested_pair(
         L=L, c0=c0, lP=lP, T_over_f2_avg=T_over_f2_avg,
         T_over_fgamma_avg=T_over_fgamma_avg, gamma=gamma,
         use_planck_scale=use_planck_scale, fit_phi=fit_phi,
-        max_iter=max_iter, n_starts=n_starts,
+        max_iter=max_iter, n_starts=n_starts, use_grad=use_grad,
     )
     env_params, lnL_env = fit_model(
         S_hat, m_eff, freqs, f_min, f_max, knots, P_floor, B_clip, n_coeff, r,

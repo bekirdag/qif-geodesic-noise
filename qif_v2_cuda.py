@@ -591,6 +591,12 @@ def fit_model_cuda(
     backend: Backend,
     init_params: dict | None = None,
 ) -> tuple[dict, float]:
+    # NOTE: this CUDA variant still uses per-parameter finite-difference
+    # gradients (eps_vec). The CPU pipeline (qif_v2.fit_model) now defaults to
+    # closed-form analytic Wishart scores (loglike_et_qif_grad), which converge
+    # ~5 lnL units deeper and run ~13x faster; all published numbers come from
+    # the CPU path. Porting the analytic score to CuPy is straightforward but
+    # is not done here because it cannot be validated without CUDA hardware.
     rho_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs = _build_initial_coeffs(
         data.S_hat_cpu, n_coeff, r, freqs=data.freqs, knots=data.knots
     )
