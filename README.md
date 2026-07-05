@@ -181,7 +181,21 @@ Notes:
 
 ## Findings (v0.2, corrected pipeline)
 
-> **CURRENT (2026-07-03): v0.3.2.** A third referee round produced boundary
+> **CURRENT (2026-07-05): v0.3.3.** Fourth referee round (edge cases): the sign
+> channel's **T_obs^{-1/2} scaling is demonstrated** (50% multipliers 69/64 σ_F at
+> 64/128 s; the coarse "84" is refined to ~70) and the **two-channel discovery
+> reach (~70 σ_F(T))** is on the forecast figure; production-tail validation shows
+> **zero events at the 10⁻³ quantile** in 3×10⁴ coherent-null and 2×10⁴
+> line-forest draws (the single-bin tail concern does not propagate to the
+> aggregate); the line-forest **stress envelope** (10× density/power, combs) holds
+> at false rate 0.000; cross-block Hann leakage is bounded (worst 0.11 on the
+> 128-bin grid, ∝1/n²); and a real seeding weakness found by measurement is fixed:
+> `fit_model` now scans **(amplitude, ρ) jointly**, restoring detection efficiency
+> for frequency-decaying κ(f) signals (2/6 → 4/6 at 64 σ_F, unbiased recovery).
+> Numbers: `test-runs/rerun_results_v033.json`; answers:
+> `docs/answers_to_questions_v0.3.2.md`.
+
+> **v0.3.2 (2026-07-03).** A third referee round produced boundary
 > measurements, no retractions: the sign channel's universal calibration gains a
 > measured finite-m validity boundary and a fit-free **coherence gate** (worst-case
 > tail false rate 0.24 on strongly coherent rank-1 nulls; MDC1 passes the gate

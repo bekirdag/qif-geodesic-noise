@@ -219,3 +219,45 @@ Lambda_95 threshold (was inconsistently labeled 2.71); fractional m_eff passed
 directly to the Bartlett calibration (code fix in sign_channel_pvalue);
 reporting policy (beta primary, fixed-rho family); numerical witness-rank
 criterion; two-channel effective threshold stated (sign channel sets it).
+
+---
+
+# 2026-07-05: v0.3.3 fourth referee round — edge cases measured, one pipeline improvement
+
+Results: test-runs/rerun_results_v033.json (suite N1-N5). Answers:
+docs/answers_to_questions_v0.3.2.md. Paper: v0.3.3 (26 pp).
+
+Pipeline improvement (found by measuring referee question A1): the 1-D
+amplitude-scan seeding under-served signals with frequency-dependent kappa(f)
+(2/6 detected at 64 sigma_F for kappa = 0.8 (f/10)^-0.3); fit_model now scans
+(amplitude, constant rho) jointly — efficiency 4/6 vs 13/16 matched-template
+(small-sample consistent), A_hat/A_inj = 0.80-1.04 on detection, fitted rho(f)
+tracks the injected decay. Null baselines unchanged (BBH306 @128s LR 0.07 vs
+0.04, both boundary noise).
+
+Measurements:
+- N2 sign-channel T-scaling DEMONSTRATED: 50% multipliers 69 sigma_F (64s) /
+  64 sigma_F (128s), ratio 0.92 — T^-1/2 like the Fisher channels. Refines
+  the coarse "84 sigma_F" to ~70 everywhere. Two-channel discovery reach
+  (~70 sigma_F(T), sign-limited) added to the forecast figure.
+- N3 line-forest stress envelope: false rate 0.000 at 0.05 through 10x
+  density (51/64 rank>=2 bins), 10x power, and combs.
+- N4 production-tail validation: ZERO events at the 1e-3 quantile in 3e4
+  coherent-rank-1-null draws and 2e4 line-forest datasets. The third-round
+  single-bin tail concern does NOT propagate to the 64-bin aggregate (the
+  accumulated positive mean outruns variance inflation); the coherence gate's
+  real work is localized few-bin candidates.
+- N5 cross-block Hann leakage: worst adjacent-block correlation 0.028
+  (64-bin grid, min n=4 native/block) and 0.11 (128-bin grid, min n=2),
+  falling as 1/n^2 to high f.
+- ORF derivation made explicit: coplanar detectors rotated by sigma give
+  tr(d1 d2)/tr(d1^2) = cos 4*sigma; ET's 120 deg -> exactly -1/2, independent
+  of the 60 deg opening.
+
+Paper additions: matched-bootstrap specification; gate-vs-signal resolution
+(gate switches calibration, never discards a band); foreground-inclusive
+sign-channel null adopted for production; non-unitary calibration bound
+(1-eps)^2 in the exclusion proof; predeclared leave-out-3 + band-split
+robustness rules; coverage interpretation (grid mechanics, not Davies) +
+predeclared remediation; finite-frequency null-stream statement; two-channel
+threshold on the forecast.

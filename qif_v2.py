@@ -1477,22 +1477,31 @@ def fit_model(
                             fit_alpha, fit_phi)
         return -float(lnL), -(grad * s_vec)
 
-    # When fitting alpha, seed the signal start with a coarse 1-D profile scan
-    # over log-alpha (nuisance parameters held at the warm-start values). In
-    # log-parameterization the numerical gradient w.r.t. alpha_val vanishes at
-    # alpha ~ 0, and a start at the raw data scale can overshoot the basin, so
-    # a gradient-free scan is the only reliable way to locate the alpha basin.
+    # When fitting alpha, seed the signal start with a coarse 2-D profile scan
+    # over (log-alpha, constant rho logit), nuisances held at the warm start.
+    # In log-parameterization the numerical gradient w.r.t. alpha_val vanishes
+    # at alpha ~ 0, so a gradient-free scan is the only reliable way to locate
+    # the alpha basin -- and the scan must also vary rho: with rho pinned at
+    # its flat initialization (rho = 0.5), signals whose transverse correlation
+    # kappa(f) differs materially from 0.5 present no attractive basin along
+    # the alpha axis alone (measured: detection efficiency for a decaying
+    # kappa(f) = 0.8 (f/10 Hz)^-0.3 injection dropped to 2/6 with the 1-D scan
+    # and recovers with this 2-D scan).
     alpha_seed = alpha_log_center
+    rho_seed_coeffs = rho_coeffs
     if fit_alpha:
         scan = np.linspace(alpha_lo, alpha_log_center + 10.0, 46)
         best_scan_val = -np.inf
-        for a_try in scan:
-            x_try = _pack_params(float(a_try), rho_coeffs, P_coeffs, B_real_coeffs,
-                                 B_imag_coeffs, phi_coeffs, fit_alpha, fit_phi)
-            v = -objective(_clip_to_bounds(x_try, bounds))
-            if v > best_scan_val:
-                best_scan_val = v
-                alpha_seed = float(a_try)
+        for rho_shift in (-2.0, 0.0, 2.0):
+            rho_try = rho_coeffs + rho_shift
+            for a_try in scan:
+                x_try = _pack_params(float(a_try), rho_try, P_coeffs, B_real_coeffs,
+                                     B_imag_coeffs, phi_coeffs, fit_alpha, fit_phi)
+                v = -objective(_clip_to_bounds(x_try, bounds))
+                if v > best_scan_val:
+                    best_scan_val = v
+                    alpha_seed = float(a_try)
+                    rho_seed_coeffs = rho_try
 
     rng = np.random.default_rng(seed)
     best_res = None
@@ -1504,7 +1513,7 @@ def fit_model(
         if start == 0:
             x0 = _pack_params(alpha_val, rho_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs, fit_alpha, fit_phi)
         elif start == 1 and fit_alpha:
-            x0 = _pack_params(alpha_seed, rho_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs, fit_alpha, fit_phi)
+            x0 = _pack_params(alpha_seed, rho_seed_coeffs, P_coeffs, B_real_coeffs, B_imag_coeffs, phi_coeffs, fit_alpha, fit_phi)
         else:
             # Jitter relative to each parameter's physical scale; absolute
             # jitters (e.g. 1e-3 on B ~ 1e-24) would swamp the initial point.
